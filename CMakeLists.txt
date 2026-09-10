@@ -58,7 +58,7 @@ option(EASEL_BUILD_EXAMPLES "编译 examples/"           ${EASEL_IS_TOP})
 option(EASEL_BUILD_TESTS    "编译 tests/"              ${EASEL_IS_TOP})
 option(EASEL_ENABLE_ASAN    "打开地址消毒器（查越界）" OFF)
 # ---- macOS 发布包（.app bundle）-------------------------------------------
-# 默认 OFF：build/default/Easel 一直是裸可执行文件，CI、文档、日常命令都认这个路径，
+# 默认 OFF：build/default/easel 一直是裸可执行文件，CI、文档、日常命令都认这个路径，
 # 不想因为打包需求破坏它们。只有 scripts/make_bundle_mac.py 打包时才显式打开这个选项，
 # 那时 easel_workbench 才会变成 build/default/Easel.app/Contents/MacOS/Easel。
 option(EASEL_MACOS_BUNDLE "打包成 Easel.app（仅 macOS，默认 OFF，裸 exe 不受影响）" OFF)
@@ -442,11 +442,21 @@ endif()
 
 # ---- 工作台（D-29）：学生的入口。编译、运行、停止、生成 exe、导出源码 ----------
 # 只在单独构建 Easel 时编（学生工程 add_subdirectory 进来时不该多编一个工具）。
-# CMake 目标名 easel_workbench（easel 已经是库目标了）；产出的可执行文件叫 Easel。
+# CMake 目标名 easel_workbench（easel 已经是库目标了）；产出的可执行文件叫 easel
+# （命令行输入友好的小写名，Windows 上是 easel.exe）。macOS bundle 是例外：bundle
+# 目录名跟着 OUTPUT_NAME 走，产品名「Easel」不能因为这次改名变成 easel.app，所以
+# EASEL_MACOS_BUNDLE=ON 时仍用大写 Easel（可执行文件落在 Contents/MacOS/Easel）。
+# scripts/make_bundle_mac.py 额外在 Contents/ 下做了个 easel -> MacOS/Easel 的软链
+# （不能放在包根：包根的 easel/ 这个名字已经被 Easel 源码树目录占了），
+# 命令行想用小写就 ./Easel.app/Contents/easel。
 option(EASEL_BUILD_WORKBENCH "编译工作台" ${EASEL_IS_TOP})
 if(EASEL_BUILD_WORKBENCH)
   add_executable(easel_workbench workbench/main.cpp)
-  set_target_properties(easel_workbench PROPERTIES OUTPUT_NAME Easel)
+  if(EASEL_MACOS_BUNDLE)
+    set_target_properties(easel_workbench PROPERTIES OUTPUT_NAME Easel)
+  else()
+    set_target_properties(easel_workbench PROPERTIES OUTPUT_NAME easel)
+  endif()
   target_link_libraries(easel_workbench PRIVATE easel easel_imgui nfd)
   target_include_directories(easel_workbench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
   target_compile_definitions(easel_workbench PRIVATE EASEL_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")

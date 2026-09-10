@@ -139,10 +139,10 @@ jobs:
           cmake --preset default
           cmake --build --preset default --target easel_workbench --parallel
           # 默认是空工程：一个文件（D-32 / D-36，作品名已限定 ASCII）
-          ./build/default/Easel --new /tmp/blank --name Blank
+          ./build/default/easel --new /tmp/blank --name Blank
           test "$(cd /tmp/blank/Blank && ls | wc -l)" -eq 1   # 只有 src/
           # 算法骨架：这一份往下继续编
-          ./build/default/Easel --new /tmp/np --name Demo --full
+          ./build/default/easel --new /tmp/np --name Demo --full
           cd /tmp/np/Demo
           ls -a
           # 脚手架一律不许出现在根目录
@@ -257,10 +257,10 @@ jobs:
           echo EXIT=%ERRORLEVEL%
 
       # 作品名已限定 ASCII（D-36）：这步原来是用来顺便验中文参数的，现在换成 ASCII 名字
-      - name: 无头验证 2/3：Easel.exe --new
+      - name: 无头验证 2/3：easel.exe --new
         shell: cmd
         run: |
-          build\mingw\Easel.exe --new "%TEMP%\np" --name Demo --full
+          build\mingw\easel.exe --new "%TEMP%\np" --name Demo --full
           echo EXIT=%ERRORLEVEL%
 
       - name: 无头验证 3/3：creative --doctor
@@ -281,7 +281,7 @@ jobs:
         with:
           name: windows-mingw-bin
           path: |
-            build/mingw/Easel.exe
+            build/mingw/easel.exe
             build/mingw/easel_tests.exe
             build/mingw/examples/sort/easel_example_sort.exe
             build/mingw/examples/creative/easel_example_creative.exe

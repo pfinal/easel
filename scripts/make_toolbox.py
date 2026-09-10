@@ -63,15 +63,15 @@ rem 代码酷工作台 —— 主入口（新建工程 / 编译 / 运行 / 生�
 rem 本文件必须用 GBK 存、不要加 chcp（理由见 start.bat）。
 title daimaku Easel
 set "KIT=%~dp0"
-if exist "%KIT%Easel.exe" (
-    start "" "%KIT%Easel.exe"
+if exist "%KIT%easel.exe" (
+    start "" "%KIT%easel.exe"
     goto :eof
 )
 if not exist "%KIT%cmake\\bin\\cmake.exe" ( echo   没找到 %KIT%cmake\\bin\\cmake.exe —— 解压不完整？请重新解压整个 zip。 & goto :fail )
 if not exist "%KIT%ninja\\ninja.exe" ( echo   没找到 %KIT%ninja\\ninja.exe —— 解压不完整？ & goto :fail )
 if not exist "%KIT%w64devkit\\bin\\g++.exe" ( echo   没找到 %KIT%w64devkit\\bin\\g++.exe —— 解压不完整？ & goto :fail )
 set "PATH=%KIT%w64devkit\\bin;%KIT%cmake\\bin;%KIT%ninja;%PATH%"
-set "WB=%KIT%easel\\build\\mingw\\Easel.exe"
+set "WB=%KIT%easel\\build\\mingw\\easel.exe"
 if not exist "%WB%" (
     echo.
     echo   第一次启动，要先把工作台编出来，几分钟。以后就直接开了。
@@ -99,16 +99,16 @@ setlocal
 set "KIT=%~dp0"
 set "OUT=%KIT%prebuilt-mingw"
 set "PATH=%KIT%w64devkit\\bin;%KIT%cmake\\bin;%KIT%ninja;%PATH%"
-if not exist "%KIT%easel\\build\\mingw\\Easel.exe" (
+if not exist "%KIT%easel\\build\\mingw\\easel.exe" (
     echo.
-    echo   还没有编过工作台。先双击 Easel.bat，编完再来。
+    echo   还没有编过工作台。先双击 easel.bat，编完再来。
     goto :fail
 )
 if exist "%OUT%" rmdir /s /q "%OUT%"
 mkdir "%OUT%"
 echo.
-echo   [1/2] 工作台 Easel.exe
-copy /y "%KIT%easel\\build\\mingw\\Easel.exe" "%OUT%\\" >nul
+echo   [1/2] 工作台 easel.exe
+copy /y "%KIT%easel\\build\\mingw\\easel.exe" "%OUT%\\" >nul
 echo   [2/2] 预编译的 Easel 包（cmake --install，十几 MB；连版本戳 easel-prebuilt.json 一起装）
 "%KIT%cmake\\bin\\cmake.exe" --install "%KIT%easel\\build\\mingw" --prefix "%OUT%\\prebuilt"
 if errorlevel 1 goto :fail
@@ -143,7 +143,7 @@ ninja --version
 echo.
 echo   模板工程在 %KIT%easel\\template
 echo.
-echo   ** 一般不用这个黑框：双击目录里的 Easel.bat 就行 **
+echo   ** 一般不用这个黑框：双击目录里的 easel.bat 就行 **
 echo      （新建工程、编译、运行、生成 exe、导出源码，都在里面）
 echo.
 echo   第一次用，先把模板拷成自己的工程：
@@ -222,19 +222,24 @@ def resolve_prebuilt_layout(path):
     """--prebuilt-dir 认两种布局：
 
     1. 「导出目录」（export-prebuilt.bat 产出，或从 Windows 虚拟机整个拷出来的）：
-           <path>/Easel.exe
+           <path>/easel.exe   （旧的导出目录是 Easel.exe，两个名字都认）
            <path>/prebuilt/easel-prebuilt.json  ← cmake --install 的 prefix
     2. 「直接给 install prefix」（自己手动 cmake --install 出来的，没有 exe）：
            <path>/easel-prebuilt.json
 
     返回 (install_prefix_dir, exe_path_or_None)：install_prefix_dir 是那份带
-    include/ lib/ 的 cmake --install 目录，exe_path 是同级的 Easel.exe（布局 2
+    include/ lib/ 的 cmake --install 目录，exe_path 是同级的 easel.exe（布局 2
     没有 exe，就是 None）。两种布局都认不出就报错。
     """
     variant1_prefix = os.path.join(path, "prebuilt")
     if os.path.exists(os.path.join(variant1_prefix, "easel-prebuilt.json")):
-        exe = os.path.join(path, "Easel.exe")
-        return variant1_prefix, (exe if os.path.isfile(exe) else None)
+        exe = None
+        for name in ("easel.exe", "Easel.exe"):   # 兼容旧名字，拷进去统一叫 easel.exe
+            cand = os.path.join(path, name)
+            if os.path.isfile(cand):
+                exe = cand
+                break
+        return variant1_prefix, exe
     if os.path.exists(os.path.join(path, "easel-prebuilt.json")):
         return path, None
     raise RuntimeError(
@@ -317,7 +322,7 @@ def check_prebuilt_commit(prebuilt_dir, source_commit):
     1. system 必须是 Windows —— 工具箱是给 Windows 机器用的，这份预编译包却是
        随便一个平台编的都能通过 commit 校验（commit 只跟源码版本有关，跟编译
        平台无关），必须在这里单独挡掉，不然会把 Mac/Linux 编的包误塞进 Windows
-       工具箱，装进去的 Easel.exe / .a 目标机器根本跑不起来（或者链接不上）。
+       工具箱，装进去的 easel.exe / .a 目标机器根本跑不起来（或者链接不上）。
     2. commit 得和正在打包的源码 commit 一样 —— 不然工具箱里预编译的 Easel
        和源码树不是同一份东西，最难查的一类问题。
     """
@@ -349,7 +354,7 @@ def main():
     ap.add_argument("--no-zip", action="store_true")
     ap.add_argument("--prebuilt-dir", metavar="路径",
                     help="一份编好的 Easel，认两种布局：export-prebuilt.bat 产出的导出目录"
-                         "（<路径>/Easel.exe + <路径>/prebuilt/，两者都拷进工具箱）"
+                         "（<路径>/easel.exe（旧名 Easel.exe 也认） + <路径>/prebuilt/，两者都拷进工具箱）"
                          "，或者直接给 cmake --install 的 prefix（<路径>/easel-prebuilt.json，"
                          "没有 exe）。必须是 Windows/MinGW 编的，由 CI 或虚拟机产。"
                          "不给就跳过 —— 第一次编译要多等三分钟，别的都一样。")
@@ -383,7 +388,7 @@ def main():
     print(f"  源码戳 → easel/VERSION.json（commit {source_commit or 'unknown'}）")
 
     # 预编译包（D-26）：有它工程 find_package(easel CONFIG) 几秒钟就链上
-    exe_dest = os.path.join(out, "Easel.exe")
+    exe_dest = os.path.join(out, "easel.exe")
     if os.path.exists(exe_dest):
         os.remove(exe_dest)  # 上一次组装可能留下的，这次没带就别让它悄悄留在包里
     have_prebuilt_exe = False
@@ -404,7 +409,7 @@ def main():
         if exe_path:
             shutil.copy2(exe_path, exe_dest)
             have_prebuilt_exe = True
-            print(f"  预编译主程序 → Easel.exe（{os.path.getsize(exe_dest)/1e6:.0f} MB）")
+            print(f"  预编译主程序 → easel.exe（{os.path.getsize(exe_dest)/1e6:.0f} MB）")
     else:
         print("  没给 --prebuilt-dir：工具箱里不带预编译的 Easel，"
               "第一次编译要等三分钟。Windows 的那份由 CI 产。")
@@ -414,7 +419,7 @@ def main():
     with open(os.path.join(out, "start.bat"), "w", encoding="gbk", newline="\r\n") as f:
         f.write(START_BAT)
     # 工作台才是主入口（D-29）；命令行那个黑框留给要手动折腾的人
-    with open(os.path.join(out, "Easel.bat"), "w", encoding="gbk", newline="\r\n") as f:
+    with open(os.path.join(out, "easel.bat"), "w", encoding="gbk", newline="\r\n") as f:
         f.write(EASEL_BAT)
     # 预编译导出脚本（把编好的东西打包发给维护者）
     with open(os.path.join(out, "export-prebuilt.bat"), "w", encoding="gbk", newline="\r\n") as f:
@@ -440,7 +445,7 @@ def main():
                 z.write(full, os.path.relpath(full, out))
     print(f"好了：{zip_path}（{os.path.getsize(zip_path)/1e6:.0f} MB）")
     if have_prebuilt_exe:
-        print("解压后，双击 Easel.exe 或 Easel.bat 直接开。路径别太深，Windows 有 260 字符限制。")
+        print("解压后，双击 easel.exe 或 easel.bat 直接开。路径别太深，Windows 有 260 字符限制。")
     else:
         print("解压后，双击 start.bat。路径别太深，Windows 有 260 字符限制。")
     return 0

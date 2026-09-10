@@ -60,17 +60,19 @@ git clone https://github.com/pfinal/easel.git && cd easel
 cmake --preset default && cmake --build --preset default
 ```
 
-`./build/default/Easel` 会打开 Workbench："New Project" -> "Build & Run"。这需要 Xcode 命令行工具（`xcode-select --install`）和 CMake。
+`./build/default/easel` 会打开 Workbench："New Project" -> "Build & Run"。这需要 Xcode 命令行工具（`xcode-select --install`）和 CMake。
 
 发布包：下载 zip，双击 `Easel.app`；需要 Xcode 命令行工具和 CMake。
 
 ### Windows
 
-有一个免安装工具箱，包含 gcc、cmake、ninja 和 Easel，由 `scripts/make_toolbox.py` 打包生成。解压后双击 `Easel.bat`（Workbench 启动器）。该工具箱的官方构建会随第一个发布版本一起提供。系统要求 Windows 7 SP1 x64 及以上（Win10/11 同样适用）；Win7 尚未实测。详见 [`docs/windows-toolbox.md`](docs/windows-toolbox.md)（含 OpenGL/DX11 后端退路说明）。
+有一个免安装工具箱，包含 gcc、cmake、ninja 和 Easel，由 `scripts/make_toolbox.py` 打包生成。解压后双击 `easel.bat`（Workbench 启动器）。该工具箱的官方构建会随第一个发布版本一起提供。系统要求 Windows 7 SP1 x64 及以上（Win10/11 同样适用）；Win7 尚未实测。详见 [`docs/windows-toolbox.md`](docs/windows-toolbox.md)（含 OpenGL/DX11 后端退路说明）。
 
 ## Workbench
 
 New Project / Build & Run / Stop / Build exe / Export source。项目以独立进程运行；点击错误行会跳转到源码中对应的位置。空白工程只有一个文件 —— `src/app.cpp` —— 构建脚本放在 `.easel/` 里，单头库不拷贝，直接指到 Easel 自己的 `dist/`。「骨架」下拉还可以选算法骨架（数据文件、逐帧回放、收敛曲线）或者任意一个自带示例。作品名只能用英文（编译器对中文路径支持不好）。
+
+每个按钮都有命令行等价物（`--build` / `--run` / `--package` / `--export`，还有无头的 `--new`）；加 `--json` 拿到机器可读的结果，例如 `easel --build ~/projects/Demo --json`。
 
 ![Workbench](docs/screenshot-workbench.png)
 
@@ -82,7 +84,8 @@ New Project / Build & Run / Stop / Build exe / Export source。项目以独立�
 
 ## 文档
 
-- [`docs/reference.md`](docs/reference.md) —— 完整的参考手册，中文，附 Scratch / Processing / openFrameworks 的对照表。
+- [`docs/reference.md`](docs/reference.md) —— 完整 API 参考（签名/参数/返回值），中文。
+- [`docs/guide.md`](docs/guide.md) —— 使用指南：Scratch / Processing / openFrameworks 对照表、项目结构惯例、设计原因，中文。
 - [`docs/cheatsheet.md`](docs/cheatsheet.md) —— 一页速查表，中文。
 - [`examples/`](examples/) —— `hello`（一圈点 + 滑块，最小的可交互示例）、`sort`（排序可视化）、`creative`（万花筒 / 轨迹 / 噪声地形 / 序列帧动画 / 声音）。
 

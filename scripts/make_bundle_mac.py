@@ -64,6 +64,10 @@ README_TXT = """Easel {version} · macOS 发布包
 
 打不开、或者画面不对，在终端里跑（把输出发给维护者）：
     Easel.app/Contents/MacOS/Easel --doctor
+
+命令行用法（Easel.app/Contents/ 下有个 easel 软链，指向上面那个可执行文件，
+两种写法都行——包根没放这个软链，因为那个位置已经被 easel/ 源码树目录占了）：
+    ./Easel.app/Contents/easel --doctor
 """
 
 # 不内置 cmake/ninja（Windows 版工具箱带，这份不带）——不管打包这台机器上有没有
@@ -207,6 +211,13 @@ def main():
     run(["ditto", app_src, app_dest])
     # Apple Silicon 上没签名连右键「打开」都不行；ad-hoc（-s -）不需要开发者证书。
     run(["codesign", "--force", "--deep", "-s", "-", app_dest])
+    # 命令行友好的软链：easel -> Easel.app/Contents/MacOS/Easel。
+    # 注意不能叫 <out_root>/easel —— 那个名字已经被第 4 步的 Easel 源码树目录占了
+    # （editor.cpp 的 resolvePaths() 运行时会在 exe 旁边找一个叫 easel/ 的目录，
+    # 里面要有 CMakeLists.txt + include/easel/easel.h，「导出源码」「新建工程」都
+    # 靠它；如果把这个目录换成指向可执行文件的软链，这两个功能会直接找不到源码树）。
+    # 软链改放进 Easel.app 内部（Contents/MacOS/ 旁边不会跟任何东西撞名）。
+    os.symlink("MacOS/Easel", os.path.join(app_dest, "Contents", "easel"))
 
     print("=== 4/6 源码树 ===")
     # 顺序要紧：copy_easel_tree() 会先 rmtree 整个 easel/ 再重建，所以必须先拷源码树，

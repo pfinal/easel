@@ -61,17 +61,19 @@ git clone https://github.com/pfinal/easel.git && cd easel
 cmake --preset default && cmake --build --preset default
 ```
 
-`./build/default/Easel` opens the Workbench: "New Project" -> "Build & Run". This requires the Xcode command line tools (`xcode-select --install`) and CMake.
+`./build/default/easel` opens the Workbench: "New Project" -> "Build & Run". This requires the Xcode command line tools (`xcode-select --install`) and CMake.
 
 Release package: download the zip, double-click `Easel.app`. Requires the Xcode command line tools and CMake.
 
 ### Windows
 
-There is a no-install toolbox containing gcc, cmake, ninja, and Easel, assembled by `scripts/make_toolbox.py`. After extracting it, double-click `Easel.bat`. The toolbox's official build ships together with the first release. Requires Windows 7 SP1 x64 or newer (Win10/11 also work); not yet tested on Windows 7. See [`docs/windows-toolbox.md`](docs/windows-toolbox.md) for details, including the OpenGL/DX11 fallback.
+There is a no-install toolbox containing gcc, cmake, ninja, and Easel, assembled by `scripts/make_toolbox.py`. After extracting it, double-click `easel.bat`. The toolbox's official build ships together with the first release. Requires Windows 7 SP1 x64 or newer (Win10/11 also work); not yet tested on Windows 7. See [`docs/windows-toolbox.md`](docs/windows-toolbox.md) for details, including the OpenGL/DX11 fallback.
 
 ## Workbench
 
 New Project / Build & Run / Stop / Build exe / Export source. A project runs as a separate process; clicking an error line jumps to the corresponding location in the source. A blank project has only one file -- `src/app.cpp` -- the build scripts live in `.easel/` and the single-header library isn't copied at all, it's pointed straight at Easel's own `dist/`. The "Skeleton" dropdown can also start from the algorithm skeleton (data file, frame-by-frame replay, convergence chart) or from any bundled example. Project names must be ASCII (compilers don't handle non-ASCII paths well).
+
+Every button has a command-line equivalent (`--build` / `--run` / `--package` / `--export`, alongside the headless `--new`); add `--json` to get a machine-readable result instead of plain text, e.g. `easel --build ~/projects/Demo --json`.
 
 ![Workbench](docs/screenshot-workbench.png)
 
@@ -83,7 +85,8 @@ Press F12 to open it: six pages -- Log (level / file:line / frame number / repea
 
 ## Documentation
 
-- [`docs/reference.md`](docs/reference.md) -- the full reference manual, in Chinese, with mapping tables from Scratch / Processing / openFrameworks.
+- [`docs/reference.md`](docs/reference.md) -- the full API reference (signatures/params/return values), in Chinese.
+- [`docs/guide.md`](docs/guide.md) -- usage guide: Scratch / Processing / openFrameworks mapping tables, project structure conventions, design rationale, in Chinese.
 - [`docs/cheatsheet.md`](docs/cheatsheet.md) -- a one-page cheat sheet, in Chinese.
 - [`examples/`](examples/) -- `hello` (a ring of points with sliders, the smallest interactive example), `sort` (sorting visualization), `creative` (kaleidoscope / trail / noise terrain / sprite animation / sound).
 

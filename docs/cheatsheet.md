@@ -1,6 +1,7 @@
 # Easel 速查表
 
-> 完整参考见 [`reference.md`](reference.md)——这一页是速查，那份是逐条讲清楚。
+> 完整 API 签名见 [`reference.md`](reference.md)；背后的设计原因、项目结构惯例、
+> 与 Scratch/Processing/openFrameworks 的对照见 [`guide.md`](guide.md)。
 >
 > 两页：第一页是 API，第二页是「出问题了怎么办」。
 > 打印出来放在手边。找不到的东西直接调 ImGui。
@@ -86,7 +87,7 @@ int main(int argc, char** argv) {
 
 ## 工作台 —— 从这里开始（D-29）
 
-双击它（Windows：工具箱里的 `Easel.bat`；Mac：`Easel`）。
+双击它（Windows：工具箱里的 `easel.bat`；Mac：`Easel`）。
 
 | 按钮 | 干什么 |
 |---|---|

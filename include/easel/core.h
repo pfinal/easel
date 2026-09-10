@@ -879,11 +879,13 @@ inline void parse(int argc, char** argv) {
             if (i > 1) {
                 std::string prev = argv[i - 1];
                 if (prev.rfind("--", 0) == 0 && prev.find('=') == std::string::npos) {
-                    // "--run" 是工作台自己的命令行 flag（编译并运行学生工程），和作品
-                    // App 的 "--edit-run"（打开编辑栏并编译运行一次）是两个不同的东西，
-                    // 但都不带值，所以都要列在这里，否则后面的位置参数会被当成它们的值吞掉。
+                    // App 的 "--edit-run"（打开编辑栏并编译运行一次）不带值，要列在这里，
+                    // 否则后面的位置参数会被当成它的值吞掉。
+                    // 工作台自己的 "--build"/"--run"/"--package"/"--export" 都带一个工程
+                    // 目录参数，不能出现在这张表里——否则那个路径会被当成位置参数，
+                    // 而不是这几个 flag 的值（workbench/main.cpp 用 cli::args().str(...) 取）。
                     static const char* valueless[] = {"--solve",    "--doctor", "--quiet", "--help",
-                                                      "--debug",    "--edit",   "--edit-run", "--run"};
+                                                      "--debug",    "--edit",   "--edit-run", "--json"};
                     consumed = true;
                     for (const char* v : valueless)
                         if (prev == v) consumed = false;

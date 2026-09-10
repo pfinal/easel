@@ -14,7 +14,7 @@
 
 ## 从哪儿开始
 
-**双击工作台**（Windows：工具箱里的 `Easel.bat`；Mac：`Easel`）。里面有：
+**双击工作台**（Windows：工具箱里的 `easel.bat`；Mac：`Easel`）。里面有：
 
 | 按钮 | 干什么 |
 |---|---|
