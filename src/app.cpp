@@ -268,7 +268,11 @@ std::string App::doctor() const {
     std::ostringstream o;
     o << doctorCore();
 #if defined(EASEL_GIT_SHA) && defined(EASEL_BUILT_WITH)
-    o << "Easel " << EASEL_VERSION << " · 提交 " << EASEL_GIT_SHA << " · " << EASEL_BUILT_WITH << "\n";
+    o << "Easel " << EASEL_VERSION << " · 提交 " << EASEL_GIT_SHA
+#if defined(EASEL_ABI)
+      << " · abi " << EASEL_ABI
+#endif
+      << " · " << EASEL_BUILT_WITH << "\n";
 #endif
     o << "  ---- 图形 ----\n";
     o << "  渲染后端    : " << internal::backend::name() << "\n";

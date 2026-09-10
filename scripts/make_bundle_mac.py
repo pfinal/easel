@@ -34,6 +34,11 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 
+# scripts/abi.py 就在这个文件旁边——ABI 指纹算法只有这一份实现，根 CMakeLists.txt
+# 和 scripts/make_toolbox.py 用的也是它。这里其实用不上直接调用它：cmake --install
+# 已经把 abi 算好写进了 easel/prebuilt/easel-prebuilt.json，直接抄过来即可（本机
+# clang 刚编的这份和源码树是同一次构建，天然一致，没必要再算一遍）。
+
 for _s in (sys.stdout, sys.stderr):
     if hasattr(_s, "reconfigure"):
         _s.reconfigure(encoding="utf-8", errors="replace")
@@ -131,10 +136,11 @@ def copy_easel_tree(dest):
     return missing
 
 
-def write_version_json(dest, commit):
+def write_version_json(dest, commit, abi):
     payload = {
         "version": easel_version(),
         "commit": commit or "unknown",
+        "abi": abi or "unknown",
         "compiler": "",
         "system": "",
         "date": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -234,8 +240,15 @@ def main():
     print(f"    {dir_size(prebuilt_dir)/1e6:.0f} MB")
 
     commit = git_commit(ROOT)
-    write_version_json(os.path.join(out_root, "easel", "VERSION.json"), commit)
-    print(f"  源码戳 → easel/VERSION.json（commit {commit or 'unknown'}）")
+    # 直接抄 cmake --install 刚写的 easel-prebuilt.json 里的 abi——本机 clang 刚编的
+    # 这份和源码树是同一次构建产的，天然一致，不用再调 abi.py 重算一遍。
+    abi = "unknown"
+    prebuilt_stamp = os.path.join(prebuilt_dir, "easel-prebuilt.json")
+    if os.path.exists(prebuilt_stamp):
+        with open(prebuilt_stamp, encoding="utf-8") as f:
+            abi = json.load(f).get("abi", "unknown")
+    write_version_json(os.path.join(out_root, "easel", "VERSION.json"), commit, abi)
+    print(f"  源码戳 → easel/VERSION.json（commit {commit or 'unknown'}，abi {abi}）")
 
     shutil.copy2(os.path.join(ROOT, "LICENSE"), os.path.join(out_root, "LICENSE.txt"))
     nlic = collect_licenses(os.path.join(out_root, "licenses"))

@@ -51,29 +51,62 @@ include(FetchContent)
 if(NOT DEFINED EASEL_DIR AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/easel/CMakeLists.txt")
   set(EASEL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/easel")
 endif()
-# 预编译包和源码树是不是同一个 commit：编出来的和源码对不上号是最难查的一类问题
-# （easel-prebuilt.json 由 cmake --install 写，VERSION.json 由 make_toolbox.py 打包源码时写）。
-# 两个 commit 都读到且不一样才改道；读不到就是没法核对，照旧信预编译包。
+# 预编译包（<工具箱>/easel/prebuilt/ 的 libeasel.a）能不能用，判据是 abi 指纹，
+# 不是 commit：easel.exe（工具，workbench/main.cpp）和 prebuilt/（这里要链接的库）
+# 是两回事，改一行工作台 UI 不影响 libeasel.a 的 ABI，不该被判成预编译包过期。
+# abi 由 scripts/abi.py 算（公开头 + 库实现源码，不含 workbench/ + 根 CMakeLists.txt
+# + 编译器身份），easel-prebuilt.json 由 cmake --install 写，VERSION.json 由
+# make_toolbox.py / make_bundle_mac.py 打包源码时写，两处调的是同一个 abi.py。
+# 两个 abi 都读到且不一样才改道；VERSION.json 没有 abi 字段（旧包）就退回比 commit；
+# 有一边什么都读不到就是没法核对，照旧信预编译包。
 set(EASEL_PREBUILT_OK TRUE)
 if(DEFINED EASEL_DIR)
+  set(_easel_prebuilt_abi "")
   set(_easel_prebuilt_commit "")
   if(EXISTS "${EASEL_DIR}/prebuilt/easel-prebuilt.json")
     file(READ "${EASEL_DIR}/prebuilt/easel-prebuilt.json" _easel_pb_json)
+    string(JSON _easel_prebuilt_abi ERROR_VARIABLE _easel_pb_abi_err GET "${_easel_pb_json}" abi)
+    if(_easel_pb_abi_err)
+      set(_easel_prebuilt_abi "")
+    endif()
     string(JSON _easel_prebuilt_commit ERROR_VARIABLE _easel_pb_err GET "${_easel_pb_json}" commit)
     if(_easel_pb_err)
       set(_easel_prebuilt_commit "")
     endif()
   endif()
 
+  set(_easel_src_abi "")
   set(_easel_src_commit "")
   if(EXISTS "${EASEL_DIR}/VERSION.json")
     file(READ "${EASEL_DIR}/VERSION.json" _easel_sv_json)
+    string(JSON _easel_src_abi ERROR_VARIABLE _easel_sv_abi_err GET "${_easel_sv_json}" abi)
+    if(_easel_sv_abi_err)
+      set(_easel_src_abi "")
+    endif()
     string(JSON _easel_src_commit ERROR_VARIABLE _easel_sv_err GET "${_easel_sv_json}" commit)
     if(_easel_sv_err)
       set(_easel_src_commit "")
     endif()
   else()
-    # 开发机上 EASEL_DIR 直接指向 Easel 的 git 仓库，没有 VERSION.json 这个文件
+    # 开发机上 EASEL_DIR 直接指向 Easel 的 git 仓库，没有 VERSION.json 这个文件；
+    # 算一次 abi.py（跟 CMakeLists.txt 里配置期算 EASEL_ABI 是同一份实现），
+    # 读不到 python3 就退回 commit。
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_EXECUTABLE AND EXISTS "${EASEL_DIR}/scripts/abi.py")
+      execute_process(
+        COMMAND ${Python3_EXECUTABLE} scripts/abi.py
+                --compiler-id "${CMAKE_CXX_COMPILER_ID}"
+                --compiler-version "${CMAKE_CXX_COMPILER_VERSION}"
+                --cxx-standard "${CMAKE_CXX_STANDARD}"
+        WORKING_DIRECTORY "${EASEL_DIR}"
+        OUTPUT_VARIABLE _easel_src_abi
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+        RESULT_VARIABLE _easel_abi_np_rc)
+      if(NOT _easel_abi_np_rc EQUAL 0)
+        set(_easel_src_abi "")
+      endif()
+    endif()
     find_program(_easel_git_np git)
     if(_easel_git_np AND EXISTS "${EASEL_DIR}/.git")
       execute_process(
@@ -89,7 +122,14 @@ if(DEFINED EASEL_DIR)
     endif()
   endif()
 
-  if(_easel_prebuilt_commit AND _easel_src_commit)
+  if(_easel_prebuilt_abi AND _easel_src_abi)
+    if(NOT _easel_prebuilt_abi STREQUAL _easel_src_abi)
+      message(STATUS "预编译的 Easel 和当前源码不匹配（abi ${_easel_prebuilt_abi} vs "
+                      "${_easel_src_abi}），改用源码编（几分钟）")
+      set(EASEL_PREBUILT_OK FALSE)
+    endif()
+  elseif(_easel_prebuilt_commit AND _easel_src_commit)
+    # 向后兼容：VERSION.json 是旧包打的，没有 abi 字段，退回比 commit。
     if(NOT _easel_prebuilt_commit STREQUAL _easel_src_commit)
       message(STATUS "预编译的 Easel 是提交 ${_easel_prebuilt_commit}，源码是提交 ${_easel_src_commit}，"
                       "不一致：改用源码编（几分钟）")

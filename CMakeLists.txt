@@ -52,7 +52,41 @@ if(EASEL_GIT_SHA STREQUAL "")
   set(EASEL_GIT_SHA "unknown")
 endif()
 set(EASEL_BUILT_WITH "${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
-message(STATUS "Easel: 提交 ${EASEL_GIT_SHA} · ${EASEL_BUILT_WITH}")
+
+# ---- ABI 指纹：预编译包能不能用的真正判据 ---------------------------------
+# commit 判断的是「源码树是不是同一个提交」，但 easel.exe（工具，workbench/main.cpp）
+# 和 prebuilt/（用户工程链接的 libeasel.a）是两回事：改一行工作台 UI 不影响
+# libeasel.a 的 ABI，不该让预编译包被判成过期。真正该比的是「库的 ABI 输入变没变」——
+# 公开头 + 库实现源码（不含 workbench/）+ 根 CMakeLists.txt（依赖版本/编译选项）+
+# C++ 标准 + 编译器身份。
+#
+# 算法只有一份实现：scripts/abi.py 的 compute_abi()。这里不用 file(SHA256 ...)
+# 自己再算一遍——GLOB 排序、拼接顺序要跟 Python 那边一个字节都不差，两套实现迟早
+# 会漂移。CMake 只负责调用它、把结果写进 easel-prebuilt.json；scripts/make_toolbox.py
+# 和 scripts/make_bundle_mac.py 写 VERSION.json 时调的是同一个 abi.py，两处必须
+# 一致——如果你在改 CMake 这段调用方式，记得那两个脚本调 abi.py 的方式也要跟着改。
+set(EASEL_ABI "unknown")
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_EXECUTABLE)
+  execute_process(
+    COMMAND ${Python3_EXECUTABLE} scripts/abi.py
+            --compiler-id "${CMAKE_CXX_COMPILER_ID}"
+            --compiler-version "${CMAKE_CXX_COMPILER_VERSION}"
+            --cxx-standard "${CMAKE_CXX_STANDARD}"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    OUTPUT_VARIABLE EASEL_ABI
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_VARIABLE _easel_abi_err
+    RESULT_VARIABLE _easel_abi_rc)
+  if(NOT _easel_abi_rc EQUAL 0 OR EASEL_ABI STREQUAL "")
+    message(STATUS "Easel: scripts/abi.py 跑失败了（${_easel_abi_err}），EASEL_ABI=unknown")
+    set(EASEL_ABI "unknown")
+  endif()
+else()
+  message(STATUS "Easel: 这台机器上找不到 python3，没法算 ABI 指纹，EASEL_ABI=unknown"
+                  "（预编译包校验会退回比 commit）")
+endif()
+message(STATUS "Easel: 提交 ${EASEL_GIT_SHA} · abi ${EASEL_ABI} · ${EASEL_BUILT_WITH}")
 
 option(EASEL_BUILD_EXAMPLES "编译 examples/"           ${EASEL_IS_TOP})
 option(EASEL_BUILD_TESTS    "编译 tests/"              ${EASEL_IS_TOP})
@@ -289,6 +323,7 @@ target_compile_definitions(easel PRIVATE
   EASEL_PROJECT_DIR="${EASEL_PROJECT_DIR}"
   EASEL_BACKEND_NAME="${EASEL_BACKEND_RESOLVED}"
   EASEL_GIT_SHA="${EASEL_GIT_SHA}"
+  EASEL_ABI="${EASEL_ABI}"
   EASEL_BUILT_WITH="${EASEL_BUILT_WITH}"
   $<$<STREQUAL:${EASEL_BACKEND_RESOLVED},dx11>:EASEL_BACKEND_DX11>
   $<$<STREQUAL:${EASEL_BACKEND_RESOLVED},gl>:EASEL_BACKEND_GL>)
@@ -424,10 +459,13 @@ if(EASEL_INSTALL)
 
   # ---- 预编译包的戳（版本对应）---------------------------------------------
   # 学生工程（src/new_project.cpp 的 kCMake）用它跟源码树的 VERSION.json 核对
-  # commit 是否一致，编出来的和源码对不上是最难查的一类问题。
+  # abi 是否一致（没有 abi 字段的旧包才退回比 commit）：编出来的和源码对不上是
+  # 最难查的一类问题，但真正要紧的是 ABI 输入变没变，不是 commit 变没变 ——
+  # 详见上面 EASEL_ABI 那段注释。commit / compiler / system / date 仍然保留，
+  # 供人工排查用。
   install(CODE "
     string(TIMESTAMP _easel_prebuilt_date \"%Y-%m-%dT%H:%M:%SZ\" UTC)
-    file(WRITE \"\${CMAKE_INSTALL_PREFIX}/easel-prebuilt.json\" \"{\\\"version\\\":\\\"${PROJECT_VERSION}\\\",\\\"commit\\\":\\\"${EASEL_GIT_SHA}\\\",\\\"compiler\\\":\\\"${EASEL_BUILT_WITH}\\\",\\\"system\\\":\\\"${CMAKE_SYSTEM_NAME}\\\",\\\"date\\\":\\\"\${_easel_prebuilt_date}\\\"}\")
+    file(WRITE \"\${CMAKE_INSTALL_PREFIX}/easel-prebuilt.json\" \"{\\\"version\\\":\\\"${PROJECT_VERSION}\\\",\\\"commit\\\":\\\"${EASEL_GIT_SHA}\\\",\\\"abi\\\":\\\"${EASEL_ABI}\\\",\\\"compiler\\\":\\\"${EASEL_BUILT_WITH}\\\",\\\"system\\\":\\\"${CMAKE_SYSTEM_NAME}\\\",\\\"date\\\":\\\"\${_easel_prebuilt_date}\\\"}\")
   ")
 endif()
 

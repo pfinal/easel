@@ -29,6 +29,11 @@ import urllib.request
 import zipfile
 from datetime import datetime, timezone
 
+# scripts/abi.py 就在这个文件旁边（脚本以 `python3 scripts/make_toolbox.py` 直接跑，
+# sys.path[0] 自动就是 scripts/ 这个目录）——ABI 指纹算法只有这一份实现，CMake 那边
+# （根 CMakeLists.txt）调的也是它，两处不会漂移。
+from abi import compute_abi
+
 # Windows 上标准输出默认 cp1252，打中文会炸；统一成 UTF-8（Python 3.7+）
 for _s in (sys.stdout, sys.stderr):
     if hasattr(_s, "reconfigure"):
@@ -297,16 +302,32 @@ def easel_version():
     return "0.1.1"
 
 
-def write_version_json(dest, commit):
+def parse_compiler(compiler_str):
+    """把 easel-prebuilt.json 里的 "compiler" 字段（"GNU 13.2.0" 这种，来自
+    CMakeLists.txt 里的 EASEL_BUILT_WITH = "${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}"）
+    拆回 (id, version)。拆不了（空/格式不对）就返回 ("", "")。
+    """
+    if not compiler_str:
+        return "", ""
+    parts = compiler_str.split(" ", 1)
+    if len(parts) == 2:
+        return parts[0], parts[1]
+    return parts[0], ""
+
+
+def write_version_json(dest, commit, abi):
     """<工具箱>/easel/VERSION.json —— 源码树的版本戳，字段和 easel-prebuilt.json 对齐。
 
     make_toolbox.py 打包出来的是源码，不是编出来的东西，所以 compiler / system 留空；
-    src/new_project.cpp 的 kCMake 拿它的 commit 跟 easel/prebuilt/easel-prebuilt.json
-    的 commit 核对，不一致就改用源码编，不会悄悄链上一份对不上号的预编译包。
+    abi 才是 src/new_project.cpp 的 kCMake 真正拿来跟 easel/prebuilt/easel-prebuilt.json
+    核对的字段（commit 只保留给人工排查用，向后兼容旧包才会退回比它）：预编译包和
+    当前源码的 ABI 输入（头文件、库实现、CMakeLists.txt、编译器）对不上号，是最难查
+    的一类问题。
     """
     payload = {
         "version": easel_version(),
         "commit": commit or "unknown",
+        "abi": abi,
         "compiler": "",
         "system": "",
         "date": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -316,15 +337,26 @@ def write_version_json(dest, commit):
         f.write("\n")
 
 
-def check_prebuilt_commit(prebuilt_dir, source_commit):
-    """--prebuilt-dir 必须带着 cmake --install 写的 easel-prebuilt.json，且要过两条校验：
+def check_prebuilt(prebuilt_dir, source_commit):
+    """--prebuilt-dir 必须带着 cmake --install 写的 easel-prebuilt.json。
 
-    1. system 必须是 Windows —— 工具箱是给 Windows 机器用的，这份预编译包却是
-       随便一个平台编的都能通过 commit 校验（commit 只跟源码版本有关，跟编译
-       平台无关），必须在这里单独挡掉，不然会把 Mac/Linux 编的包误塞进 Windows
-       工具箱，装进去的 easel.exe / .a 目标机器根本跑不起来（或者链接不上）。
-    2. commit 得和正在打包的源码 commit 一样 —— 不然工具箱里预编译的 Easel
-       和源码树不是同一份东西，最难查的一类问题。
+    校验分两档：
+    1. system 必须是 Windows —— 硬性。工具箱是给 Windows 机器用的，这份预编译包
+       随便一个平台编的都能通过版本校验（版本戳只跟源码有关，跟编译平台无关），
+       必须在这里单独挡掉，不然会把 Mac/Linux 编的包误塞进 Windows 工具箱，装
+       进去的 easel.exe / .a 目标机器根本跑不起来（或者链接不上）。
+    2. abi 不一致 —— 只警告，不阻断打包：源码改了（哪怕只是 workbench/ 之外的
+       库实现或依赖版本），预编译包的 ABI 就跟不上了，但学生工程那边的
+       new_project.cpp/kCMake 逻辑会自己发现 abi 不一致、自动改用源码编，
+       不会悄悄链上一份错的库，所以这里没必要拿它挡打包流程。
+       用 easel-prebuilt.json 里记录的编译器信息重算一遍当前源码「假如用那份
+       编译器编译」的 abi，跟包里存的 abi 比对——两边不一致才说明源码真的变了
+       （而不是编译器/系统差异造成的误报）。
+    commit 只记录，不参与判断（历史遗留字段，人工排查用）。
+
+    返回这次算出来的 source abi（compiler 用预编译包自己声明的那个），供
+    write_version_json 写进 VERSION.json——工具箱里 VERSION.json 和
+    easel-prebuilt.json 的 abi 因此在“源码没变”的前提下天然相等。
     """
     stamp = os.path.join(prebuilt_dir, "easel-prebuilt.json")
     if not os.path.exists(stamp):
@@ -338,12 +370,21 @@ def check_prebuilt_commit(prebuilt_dir, source_commit):
             f"{stamp} 里 system 是 {system!r}，不是 \"Windows\" —— 这份预编译包不是 Windows/MinGW "
             f"编的，不能塞进 Windows 工具箱（目标机器上会跑不起来），换一份在 Windows 上 "
             f"cmake --install 出来的再来")
+
     prebuilt_commit = meta.get("commit")
-    if not source_commit:
-        raise RuntimeError("打包用的这份 Easel 源码不是 git 仓库（或者没装 git），测不出 commit，"
-                            "没法核对预编译包是不是同一份源码编的")
-    if prebuilt_commit != source_commit:
-        raise RuntimeError(f"预编译包是 {prebuilt_commit} 编的，源码是 {source_commit}，重编一份再来")
+    print(f"  （预编译包提交 {prebuilt_commit or 'unknown'}，源码提交 {source_commit or 'unknown'}，"
+          f"仅记录不校验）")
+
+    compiler_id, compiler_version = parse_compiler(meta.get("compiler", ""))
+    source_abi = compute_abi(ROOT, compiler_id, compiler_version)
+    prebuilt_abi = meta.get("abi")
+    if not prebuilt_abi:
+        print(f"[工具箱] 警告：{stamp} 里没有 abi 字段（旧版本装出来的包），没法核对 ABI 是否一致")
+    elif prebuilt_abi != source_abi:
+        print(f"[工具箱] 警告：预编译包的 abi（{prebuilt_abi}）和当前源码的 abi（{source_abi}）不一致，"
+              f"用户工程会自动改用源码编。要让预编译生效就在目标平台（Windows/MinGW）重编一份再"
+              f"用 --prebuilt-dir 传进来")
+    return source_abi
 
 
 def main():
@@ -384,8 +425,6 @@ def main():
         print(f"  （跳过不存在的：{', '.join(missing)}）")
 
     source_commit = git_commit(ROOT)
-    write_version_json(os.path.join(out, "easel", "VERSION.json"), source_commit)
-    print(f"  源码戳 → easel/VERSION.json（commit {source_commit or 'unknown'}）")
 
     # 预编译包（D-26）：有它工程 find_package(easel CONFIG) 几秒钟就链上
     exe_dest = os.path.join(out, "easel.exe")
@@ -395,10 +434,14 @@ def main():
     if args.prebuilt_dir:
         try:
             prebuilt_prefix, exe_path = resolve_prebuilt_layout(args.prebuilt_dir)
-            check_prebuilt_commit(prebuilt_prefix, source_commit)
+            # abi 用预编译包自己声明的编译器重算，这样「源码没变」时它和包里存的 abi
+            # 天然相等；不一致只警告不阻断（system 不对才是硬错误，见函数注释）。
+            source_abi = check_prebuilt(prebuilt_prefix, source_commit)
         except RuntimeError as e:
             print(f"[工具箱] {e}", file=sys.stderr)
             return 2
+        write_version_json(os.path.join(out, "easel", "VERSION.json"), source_commit, source_abi)
+        print(f"  源码戳 → easel/VERSION.json（commit {source_commit or 'unknown'}，abi {source_abi}）")
         dest = os.path.join(out, "easel", "prebuilt")
         try:
             size = copy_prebuilt(prebuilt_prefix, dest)
@@ -411,6 +454,12 @@ def main():
             have_prebuilt_exe = True
             print(f"  预编译主程序 → easel.exe（{os.path.getsize(exe_dest)/1e6:.0f} MB）")
     else:
+        # 没有预编译包可比对，就用空编译器算一次 abi（跟 "compiler": "" 这个占位符
+        # 一致）——反正没有 prebuilt/，new_project.cpp 的 kCMake 那条比对逻辑压根不会
+        # 走到，这个值只是让 VERSION.json 的字段齐整。
+        source_abi = compute_abi(ROOT)
+        write_version_json(os.path.join(out, "easel", "VERSION.json"), source_commit, source_abi)
+        print(f"  源码戳 → easel/VERSION.json（commit {source_commit or 'unknown'}，abi {source_abi}）")
         print("  没给 --prebuilt-dir：工具箱里不带预编译的 Easel，"
               "第一次编译要等三分钟。Windows 的那份由 CI 产。")
 
