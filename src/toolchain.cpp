@@ -6,6 +6,7 @@
 #include "internal.h"
 
 #include <cctype>
+#include <climits>
 #include <cstdlib>
 #include <cstring>
 
@@ -116,6 +117,16 @@ std::string exePath() {
     std::string buf(n, '\0');
     if (_NSGetExecutablePath(&buf[0], &n) != 0) return {};
     buf.resize(std::strlen(buf.c_str()));
+    // _NSGetExecutablePath 的文档明确写着：返回的路径可能是个符号链接，不保证是真实
+    // 路径。macOS 发布包的命令行入口 Contents/easel 就是个符号链接（指到
+    // Contents/MacOS/Easel）——不 resolve 的话，从这条软链启动时算出来的 exeDir()
+    // 会是 Contents/ 而不是 Contents/MacOS/，editor.cpp 里那条推 bundle 布局的逻辑
+    // （从 exeDir() 推 Contents/Resources/easel）就会多退一层、指到不存在的路径，
+    // 于是那条候选判定失败，退回编译期的 EASEL_SOURCE_DIR（打包机上的路径，在别人
+    // 机器上是错的）。用 realpath() 把符号链接解开，拿到的就是恒定的
+    // .../Contents/MacOS/Easel，不管从哪条路径启动的都一样。
+    char resolved[PATH_MAX];
+    if (::realpath(buf.c_str(), resolved)) return resolved;
     return buf;
 #else
     char    buf[4096];

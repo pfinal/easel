@@ -36,6 +36,24 @@ int main(int argc, char** argv) {
 | `frameRate` | `App& frameRate(double fps)` | 帧率上限，默认 60；传 `0` 关闭上限。命令行 `--fps N` 之后覆盖。窗口最小化/被遮挡时自动降到约 10 帧 |
 | `idleThrottle` | `App& idleThrottle(bool)` | 默认 `false`。开启后：无输入且闲置 > 0.5s 时，帧间隔放大到 100ms；一有输入/子进程运行中/toast 显示中立即恢复 `frameRate()` 速度 |
 | `busyWhen` | `App& busyWhen(std::function<bool()>)` | `idleThrottle` 开启时，返回 `true` 则视为忙碌，保持满帧 |
+| `background` | `App& background(const Color&)` | 画布底色，不设就用主题的 `bg` |
+| `panelWidth` | `App& panelWidth(float px)` | 右侧面板宽度 |
+| `editorEnabled` | `App& editorEnabled(bool)` | `false` = 连 F9 都不响应。工具类作品建议关掉 |
+| `debugConsoleEnabled` | `App& debugConsoleEnabled(bool)` | `false` = 连 F12 都不响应 |
+
+其它常用成员：
+
+```cpp
+App& welcome(const std::string& title, const std::string& desc, std::function<void()> body);
+void closeWelcome();  bool welcomeOpen() const;   // 启动页：别让人一进来看到空白画布
+void toast(const std::string& s);                 // 顶部中间飘一条，两秒半后消失
+void status(const std::string& s);                // 底部状态栏文字（需 statusBar(true)）
+bool screenshot(const std::string& path);         // 把当前画面存成 PNG
+Camera& camera();  Canvas& canvas();
+double dpiScale() const;  const char* backendName() const;
+void quit();
+static App* instance();
+```
 
 <a id="onframe"></a>
 ### 回调
@@ -54,6 +72,19 @@ int main(int argc, char** argv) {
 `onStart` 是**唯一**能调用 [`loadTexture`](#loadtexture) 的地方（`run()` 之前显卡上下文不存在），只调一次。
 `onWindow` 可与 `onDraw` 同时使用，画在其上层。
 
+<a id="什么时候能调什么"></a>
+### 什么时候能调什么
+
+| 时机 | 能做 | 不能做 |
+|---|---|---|
+| **全局变量的初始化** | 纯计算 | **任何 easel 调用**。`audio::Sound::load` 之类会碰到 Easel 内部的全局对象，而全局之间的初始化顺序是未定义的——今天能跑，换台机器/换个链接顺序就崩在 `main` 之前，最难查 |
+| `main` 里、`run()` 之前 | `camera().fit()`/`center()`/`zoom()`（会延迟到首帧执行）、`cli::args()`、各种设置项 | `loadTexture`（没有显卡上下文） |
+| `onStart` | `loadTexture`、`audio::Sound::load`、`audio::loop`——**资源都在这里加载** | — |
+| `onFrame` | 改状态、跑模拟 | 这里读 `c.hovered()`/`c.mouse()` 拿到的是**上一帧**的值（画布本帧还没 begin） |
+| `onDraw` / `onPanel` | 画图、读当帧的 `c.mouse()`/`c.hovered()` | — |
+
+一句话：**资源加载放 `onStart`，别放全局变量的初始化。**
+
 ---
 
 ## 2. 画布与坐标
@@ -66,6 +97,8 @@ int main(int argc, char** argv) {
 Vec2 s = c.toScreen(worldPoint);   // 世界 -> 屏幕像素
 Vec2 w = c.toWorld(screenPoint);   // 屏幕像素 -> 世界
 Rect visible = c.world();          // 当前画布可见的世界范围
+Rect box = c.screen();             // 画布在窗口里的像素矩形；做"贴在屏幕角落"的 HUD 时用
+                                   //   Vec2 hud = c.toWorld(c.screen().min() + Vec2(14, 14));
 double z = c.zoom();               // 一个世界单位 = 多少像素
 Vec2 m = c.mouse();                // 鼠标当前世界坐标；不受变换栈（push/translate/rotate）影响
 ```
@@ -119,7 +152,9 @@ void ellipse(const Vec2& center, double rxWorld, double ryWorld);   // 传半轴
 <a id="c-arc"></a>
 ```cpp
 void arc(const Vec2& center, double radius, double a0, double a1, bool pie = false);
-// 角度为弧度；pie=true 连回圆心画成扇形（填充），否则只画弧线（不填充）
+// 角度为弧度；pie=true 把弧的两端连回圆心，画成一块扇形。
+// 注意：**填不填充只看当前 fill 状态，与 pie 无关**——fill 开着时，pie=false 的弧
+// 也会被两端的弦封起来填成一片。想要一条干净的弧线（比如笑脸的嘴），先 noFill()。
 ```
 
 <a id="c-triangle-polygon"></a>
@@ -188,9 +223,11 @@ struct Theme {
     Color accent, accent2;          // 主色 / 次色
     Color bg, surface, fg, muted;   // 画布背景 / 面板 / 正文 / 次要文字
     Color good, warn, bad;          // 语义色：成功 / 警告 / 危险
+    bool  dark;                     // 深色主题为 true
     float radius;                   // 圆角
     float fontSize;
     std::string fontPath;           // 空 = 自动找系统字体，见字体来源
+    std::string name;               // 主题名，如 "Forest"；做主题切换 UI 时用它当标签
 };
 Theme Theme::Forest();  Theme Theme::Ocean();  Theme Theme::Ember();   // 深色
 Theme Theme::Paper();   Theme Theme::Slate();                          // 浅色
@@ -228,6 +265,31 @@ Vec2    transform(const Vec2& p) const;   // p 经当前变换后的世界坐标
 调用顺序即作用顺序：`translate(p).rotate(a)` = 先转再移。`c.mouse()`/`c.toWorld()`
 不受变换栈影响。未配对的 `push()`/`pop()` 会导致变换累积到下一次绘制。
 
+<a id="变换影响谁"></a>
+### 变换影响谁、不影响谁
+
+第 2 节讲的是**单位**（世界坐标还是屏幕像素），这里讲的是另一件事：**哪些东西会被
+`rotate` / `scale` 改变**。两者不是一回事，混起来是最容易踩的坑。
+
+| | 跟着变换走 | 不跟着 |
+|---|---|---|
+| 位置 | 所有图元的顶点；`image()` 的四个角 | — |
+| 尺寸 | `circle`/`ellipse`/`arc` 的半径、`rect` 的边长 | 线宽、字号、`dot()` 的半径 |
+| 文字 | 只有**锚点** | **字形本身**：永远轴对齐、永远是屏幕像素 |
+| 鼠标 | — | `c.mouse()`、`c.toWorld()` |
+
+两个最常见的意外：
+
+- **`text()` 不会转、也不会缩。** 对画在局部原点的一行字做 `rotate()` / `scale()`，
+  锚点没动，字形又不受矩阵影响，屏幕上**什么变化都没有**（代码看着完全正确）。
+  想让字变大改 `textSize()`；想让字绕圈，先 `translate` 把锚点推出去再 `rotate`，
+  让锚点自己跑圆周。
+- **`image()` 相反，它会转。** 贴图是四个角分别过矩阵的，所以 `rotate`/`scale`
+  能把图片转起来、翻过来。text 和 image 在这一点上行为相反，别套用。
+
+线宽同理：想让线条越来越细（比如递归画树的枝条），不能靠 `scale()`，
+必须每一级显式 `stroke(color, width)` 或 `strokeWidth(px)` 传新值。
+
 ---
 
 ## 6. 图片
@@ -260,6 +322,10 @@ void    text(const Vec2& at, const std::string& s, Align align = Align::Left);
 
 `at` 为世界坐标，字号为屏幕像素（不随缩放变化）。
 
+**文字不会跟着 `rotate()` / `scale()` 转或缩**——只有锚点过变换矩阵，字形本身永远
+轴对齐地画出来。要变大改 `textSize()`；要绕圈就 `translate` 把锚点推出去再 `rotate`。
+详见[变换影响谁、不影响谁](#变换影响谁)。
+
 <a id="字体来源"></a>
 ### 中文字体查找顺序
 
@@ -275,7 +341,10 @@ void    text(const Vec2& at, const std::string& s, Align align = Align::Left);
 ```cpp
 class Layer {
     Layer& fill(const Color&);  Layer& stroke(const Color&, double px);   // 同 Canvas
-    void line/polyline/circle/ellipse/dot/rect/triangle/polygon/text/image(...);   // 同 Canvas 签名
+    // 下面这十个的签名与 Canvas 的同名函数一致。但 Layer 的图元集合**比 Canvas 少**：
+    void line/polyline/circle/ellipse/dot/rect/triangle/polygon/text/image(...);
+    // 没有 arc / bezier / beginShape / vertex。要把曲线存进 Layer，
+    // 自己采样成一串点交给 polyline()。
     void   clear();                     // 全部擦除
     size_t size() const;                // 当前记录的图元条数
     void   limit(size_t maxCommands);   // 上限，默认 20 万，超出自动丢弃最早的
@@ -288,6 +357,16 @@ class Layer {
     struct S { Layer ink; } S;
     void onFrame(double) { if (c.hovered()) S.ink.stroke(color, 2).line(prev, c.mouse()); }
     void onDraw(Canvas& c) { c.draw(S.ink); }
+
+两条要点：
+
+- **Layer 记的是绝对世界坐标，不记变换栈。** 落笔时 Canvas 上的 `push`/`rotate`
+  对它没有影响；反过来，`c.push().rotate(a); c.draw(ink); c.pop();` 会把**整个图层**
+  一起转，不是把每一笔各转一份。想要"一笔自动复制成 N 份旋转副本"（万花筒），
+  得在落笔时就用 `Vec2::rotated()` 把 N 份的坐标都算好、都写进 Layer。
+- **`limit()` 要按重放成本定，不是按内存定。** `Canvas::draw(layer)` 每帧把记下的
+  每一条命令重走一遍，且**不做视口裁剪**。默认上限 20 万对累积类作品偏大，
+  见[性能预算](#性能预算)。
 
 ---
 
@@ -315,6 +394,18 @@ App& onKey(std::function<void(int)>);   // 参数为 ImGuiKey；仅在键刚按�
 ```
 
 持续按住需在 `onFrame` 中自行判断：`ImGui::IsKeyDown(ImGuiKey_Space)`。
+方向键的名字是 `ImGuiKey_LeftArrow` / `RightArrow` / `UpArrow` / `DownArrow`
+（没有 `ImGuiKey_Up` 这种写法）。
+
+<a id="click-drag-契约"></a>
+### `onClick` 与 `onDrag` 的关系
+
+- **两者互斥，同一次按下松开只会触发其中一个。** 松手时：若已经进入拖拽状态，
+  只发一次 `onDrag`（`ended = true`）；若从按下到松开位移小于 4 像素，只发 `onClick`。
+  所以"点一下生成一个、拖一下甩出去"不会一次生出两个。
+- **`ended` 那一帧的 `delta` 是 `{0, 0}`。** 想拿拖拽速度当初速度（"甩"），
+  要用**上一帧**的 `delta`，别在 `ended` 帧才去取。
+- `delta` 是**本帧位移**，不是从起点算起的累计量；累计量自己用 `current - start`。
 
 ---
 
@@ -362,7 +453,7 @@ struct Vec2 { double x, y; };
 Vec2   operator+(Vec2, Vec2);   Vec2 operator-(Vec2, Vec2);
 Vec2   operator*(Vec2, double); Vec2 operator/(Vec2, double);   Vec2 operator-(Vec2);
 double length() const;    double length2() const;   // 长度平方，省一次开方
-Vec2   normalized() const;   Vec2 perp() const;      // 垂直向左（世界 y 向下时视觉上是左转）
+Vec2   normalized() const;   Vec2 perp() const;      // 逆时针 90°：(x, y) -> (-y, x)
 double angle() const;     Vec2 rotated(double rad) const;
 ```
 
@@ -405,6 +496,8 @@ class Rng {
     double normal(double mean = 0, double sd = 1);
     template<class T> void shuffle(std::vector<T>& v);
     template<class T> const T& pick(const std::vector<T>& v);
+    void     reseed(unsigned s);   // 只重设这一个 Rng，不动 noise
+    unsigned seed() const;
 };
 Rng&     rng();            // 全局随机源
 void     seed(unsigned);   // 同时重设 noise() 的种子；只想单独换 noise 用 noiseSeed(x)
@@ -412,6 +505,15 @@ unsigned current_seed();
 ```
 
 不带 `--seed` 启动时每次换新种子，并打印当前种子（`--seed N` 复现）。
+
+**想让"同一颗种子 = 同一个结果"真的成立，一行里别抽两次。** C++ 不规定同一个
+表达式里几个函数调用谁先执行，所以 `rng().pick(A) + rng().pick(B)` 这样写，
+换个编译器就可能抽出不同结果。拆成两条语句：
+
+```cpp
+const std::string& a = rng().pick(A);
+std::string name = a + rng().pick(B);
+```
 
 <a id="noise"></a>
 ### `noise`
@@ -474,17 +576,22 @@ class Sound {
 
 ```cpp
 template<class T> class Timeline {
-    void load(std::vector<T> frames);
+    void load(std::vector<T> frames);   // 载入后 pos 归 0 且**处于暂停**，要放得自己再 play()
     void push(const T&);
     void clear();
+    bool empty() const;
     const T& current() const;
-    const T& at(int i) const;
-    std::vector<T>& frames();
+    const T& at(int i) const;           // i 自动夹到 [0, size-1]，越界不会崩
+    std::vector<T>& frames();           // 另有 const 版
     size_t size() const;
 };
-// 播放控制（与 T 无关）：
-void play(); void pause(); void toggle(); void step(int dir); void seek(int i);
+// 播放控制（与 T 无关，在基类 TimelineBase 上）：
+void play(); void pause(); void toggle(); void step(int dir = 1); void seek(int i);
 void speed(double s); void fps(double f); void rewind(); bool loop;
+int    index() const;      // 当前第几帧——画 current() 之外的东西（轨迹、进度）时几乎必用
+bool   playing() const;
+bool   atEnd() const;
+double progress() const;   // 0..1
 
 App& transport(TimelineBase&);   // 接到窗口底部播放条：进度条/倍速/单步
 ```
@@ -517,10 +624,12 @@ bool        fs::writeText(const std::string& path, const std::string& content);
 json        fs::loadJson(const std::string& path);            // 失败返回 json()（null）并打印 warn，不抛异常
 bool        fs::saveJson(const std::string& path, const json& j, int indent = 2);
 
-std::string file::open(const std::string& filterName = "工程文件", const std::string& extensions = "json");
+// 这三个收的都是 const char*（不是 std::string）；传 std::string 变量要 .c_str()
+std::string file::open(const char* filterName = "工程文件", const char* extensions = "json");
 // 系统对话框；用户取消返回空串
-std::string file::save(const std::string& defaultName = "project.json", const std::string& filterName = "", const std::string& extensions = "");
+std::string file::save(const char* defaultName = "project.json", const char* filterName = "工程文件", const char* extensions = "json");
 std::string file::folder(const char* defaultPath = nullptr);
+// extensions 是过滤器规格：多个扩展名用逗号分隔，如 "wav,mp3,flac"
 ```
 
 <a id="cli-args"></a>
@@ -625,6 +734,11 @@ App 内置的（构造 `App` 时自动解析）：
 自己的参数用 `cli::args()`（见[第 14 节](#cli-args)）。Windows 上作品是 GUI 程序，
 从命令行运行时输出会接回当前终端。
 
+**`--frames N --screenshot x.png` 截出来是空画面？** `--frames 120` 只跑了大约两秒，
+凡是"要等几秒才发生一次"或"要积累一阵才好看"的效果，那时候都还没发生。写作品时就
+按"一打开就有画面"来设计：定时器的初值直接设成大于阈值（让第一次立刻触发），
+积累类效果在 `onStart` 里先空跑若干步预热。
+
 ### 主程序的命令行
 
 上面那张表是**作品**（学生编译出来的 app）的命令行；工作台本身（`easel` /
@@ -673,7 +787,31 @@ ImGui/GLFW（头一回 3 分钟）。先跑一次 `cmake --build build/default -
 
 ---
 
-## 18. 常见错误
+## 18. 性能预算
+
+<a id="性能预算"></a>
+Easel 每帧重画整张画布（相机缩放和回放才能成立），所以**每帧的图元总数**是唯一
+需要盯的指标。F12 →「画布」页显示的就是它。
+
+几个定数量级用的事实：
+
+- 一条 `line` 在底层是 6 个顶点。**几万条图元/帧是安全区**，十几万开始吃力，
+  二三十万基本就是幻灯片了。
+- `imconfig.h` 里 `ImDrawIdx` 默认是 **16 位**，单个绘制批次超过 65535 个顶点要靠
+  后端的 `VtxOffset` 支持才不出错。这也是别把图元数堆太高的另一个理由。
+- `Canvas::draw(Layer)` **逐条重放、不做视口裁剪**，每条还要存/取一次样式。
+  Layer 的 `limit()` 该按这个定：累积类作品（流场、涂鸦、长拖尾）通常设到
+  **几万条**就到头了，默认的 20 万只适合"其实画不了那么多"的场合。
+- `text()` 比 `line()` 贵（要测量、要排字形），画成千上万个标签之前先想想。
+- 视口外的图元**照样要走一遍**投影和判断，只是不出现在画面上。地图/无限世界
+  这类作品要自己用 `c.world()` 把循环范围裁掉，并按 `c.zoom()` 动态调整格子大小，
+  否则缩得越远画得越多。
+
+一句话：**图元数要跟画布的像素面积挂钩，不能跟世界的大小挂钩。**
+
+---
+
+## 19. 常见错误
 
 **画布一片空白** → F12 → 画布页看图元数是不是 0：`onDraw` 是否提前 `return`；
 若图元数不为 0 但「视口外」数量很大，多半是没调 `camera().fit(...)`。
@@ -682,6 +820,25 @@ ImGui/GLFW（头一回 3 分钟）。先跑一次 `cmake --build build/default -
 `Theme::fontPath = "assets/fonts/xxx.ttf"`，或设环境变量 `EASEL_FONT`。
 
 **点了画布没反应** → 鼠标在面板上时不触发 `onClick`/`onDrag`；空格+拖拽是平移不是点击。
+另外这两个回调是**互斥**的，稍微拖一下就只会走 `onDrag` 不走 `onClick`，
+见 [`onClick` 与 `onDrag` 的关系](#click-drag-契约)。
+
+**加了 `rotate()` / `scale()`，文字纹丝不动** → 设计行为：`text()` 只有锚点过变换矩阵，
+字形永远轴对齐。要变大用 `textSize()`，要绕圈先 `translate` 把锚点推出去。
+见[变换影响谁、不影响谁](#变换影响谁)。
+
+**`arc()` 画出来是实心的一片** → 填不填充只看 fill 状态，与 `pie` 无关。
+想要一条弧线先 `noFill()`。
+
+**画着画着越来越卡** → `Layer` 没设 `limit()`，或设得太大。`Canvas::draw(layer)`
+每帧要把记下的每一条重放一遍且不裁剪，见[性能预算](#性能预算)。
+
+**同一个 `--seed`，两台机器/两个编译器结果不一样** → 多半是在一个表达式里抽了两次随机数
+（如 `rng().i(..) + rng().i(..)`），C++ 不规定谁先执行。拆成两条语句。
+
+**程序在 `main` 之前就崩了 / 偶发崩溃换台机器才出现** → 在全局变量的初始化里调了
+Easel 的东西（最常见是 `audio::Sound::load`）。全局之间的初始化顺序未定义，
+资源加载一律放 `onStart`。见[什么时候能调什么](#什么时候能调什么)。
 
 **`loadTexture` 返回空 `Texture` / 崩溃** → 只能在 `App::onStart` 中调用；
 之前（全局变量初始化、`run()` 之前）显卡上下文还未建立。
