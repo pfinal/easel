@@ -66,7 +66,7 @@ cmake --preset default && cmake --build --preset default
 
 ### Windows
 
-有一个免安装工具箱，包含 gcc、cmake、ninja 和 Easel，由 `scripts/make_toolbox.py` 打包生成。解压后双击 `Easel.bat`（Workbench 启动器）。该工具箱的官方构建会随第一个发布版本一起提供。系统要求 Windows 7 SP1 x64 及以上（Win10/11 同样适用）；Win7 尚未实测。详见 [`windows-green/README.md`](windows-green/README.md)（含 OpenGL/DX11 后端退路说明）。
+有一个免安装工具箱，包含 gcc、cmake、ninja 和 Easel，由 `scripts/make_toolbox.py` 打包生成。解压后双击 `Easel.bat`（Workbench 启动器）。该工具箱的官方构建会随第一个发布版本一起提供。系统要求 Windows 7 SP1 x64 及以上（Win10/11 同样适用）；Win7 尚未实测。详见 [`docs/windows-toolbox.md`](docs/windows-toolbox.md)（含 OpenGL/DX11 后端退路说明）。
 
 ## Workbench
 
@@ -109,7 +109,6 @@ ctest --preset default
 | `examples/` | `hello`、`sort`、`creative` 示例 |
 | `docs/` | 参考手册、速查表、截图 |
 | `scripts/` | `vendor.py`（离线依赖）、`make_toolbox.py`（Windows 工具箱）、`package.py`（发布打包） |
-| `windows-green/` | Windows 免安装工具箱的说明 |
 | `tests/` | 单元测试（doctest） |
 
 ## 许可证

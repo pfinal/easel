@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""组装 macOS 发布包 —— 结构镜像 windows-green 的免安装工具箱，但 macOS 上不内置
-cmake/ninja/编译器（Xcode 命令行工具 + 一个装好的 CMake 就够，多数开发机上已经有）。
+"""组装 macOS 发布包 —— 结构镜像 Windows 免安装工具箱（docs/windows-toolbox.md，
+scripts/make_toolbox.py 组装），但 macOS 上不内置 cmake/ninja/编译器（Xcode 命令行
+工具 + 一个装好的 CMake 就够，多数开发机上已经有）。
 
     python3 scripts/make_bundle_mac.py
 
-产出 dist-mac/Easel-<版本>-macos/（以及同名 .zip）：
+产出 build/pack/Easel-<版本>-macos/（以及同名 .zip）：
 
     Easel-0.1.1-macos/
     ├── Easel.app                 本机编的（EASEL_MACOS_BUNDLE=ON + Release），已 ad-hoc 签名
@@ -44,7 +45,7 @@ if sys.platform != "darwin":
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# 打进 <包>/easel/ 的东西。比 windows-green 那份少了 CMakePresets.json / scripts / workbench /
+# 打进 <包>/easel/ 的东西。比 Windows 工具箱那份少了 CMakePresets.json / scripts / workbench /
 # tests / README.md —— 学生工程走的是 --new 生成的 .easel/CMakeLists.txt（直接
 # -DEASEL_DIR=<路径>），不需要 Easel 自己的 preset 或工作台源码；但 dist/（单头库
 # easel.hpp 摊平版）必须带上，src/new_project.cpp 生成的 CMakeLists 里
@@ -95,10 +96,16 @@ def git_commit(repo):
 
 
 def easel_version():
-    cmake = os.path.join(ROOT, "CMakeLists.txt")
-    text = open(cmake, encoding="utf-8").read()
-    m = re.search(r"project\(\s*easel\s+VERSION\s+([0-9.]+)", text)
-    return m.group(1) if m else "0.0.0"
+    """从 include/easel/core.h 的 #define EASEL_VERSION "x.y.z" 里取版本号，读不到就 0.1.1。"""
+    header = os.path.join(ROOT, "include", "easel", "core.h")
+    try:
+        text = open(header, encoding="utf-8").read()
+        m = re.search(r'#define\s+EASEL_VERSION\s+"([0-9.]+)"', text)
+        if m:
+            return m.group(1)
+    except OSError:
+        pass
+    return "0.1.1"
 
 
 def copy_easel_tree(dest):
@@ -160,7 +167,7 @@ def collect_licenses(dest):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--out", default=os.path.join(ROOT, "dist-mac"))
+    ap.add_argument("--out", default=os.path.join(ROOT, "build", "pack"))
     ap.add_argument("--no-zip", action="store_true")
     args = ap.parse_args()
 

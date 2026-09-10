@@ -9,7 +9,7 @@
 
     python3 scripts/make_toolbox.py --prebuilt-dir <MinGW 装出来的 prefix>
 
-产出 windows-green/代码酷C++工具箱.zip。解压后，双击 start.bat 就能用：
+产出 build/pack/Easel-<版本>-windows-x64.zip。解压后，双击 start.bat 就能用：
 不装任何东西、不要管理员权限、不写注册表、不用联网。
 
 三个组件都是**纯 zip**（不是 7z 自解压），所以这个脚本在 Mac / Linux / Windows 上
@@ -280,11 +280,16 @@ def git_commit(repo):
 
 
 def easel_version():
-    """从根 CMakeLists.txt 的 project(easel VERSION x.y.z ...) 里取版本号。"""
-    cmake = os.path.join(ROOT, "CMakeLists.txt")
-    text = open(cmake, encoding="utf-8").read()
-    m = re.search(r"project\(\s*easel\s+VERSION\s+([0-9.]+)", text)
-    return m.group(1) if m else "0.0.0"
+    """从 include/easel/core.h 的 #define EASEL_VERSION "x.y.z" 里取版本号，读不到就 0.1.1。"""
+    header = os.path.join(ROOT, "include", "easel", "core.h")
+    try:
+        text = open(header, encoding="utf-8").read()
+        m = re.search(r'#define\s+EASEL_VERSION\s+"([0-9.]+)"', text)
+        if m:
+            return m.group(1)
+    except OSError:
+        pass
+    return "0.1.1"
 
 
 def write_version_json(dest, commit):
@@ -338,7 +343,9 @@ def check_prebuilt_commit(prebuilt_dir, source_commit):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--out", default=os.path.join(ROOT, "windows-green", "工具箱"))
+    version = easel_version()
+    ap.add_argument("--out", default=os.path.join(
+        ROOT, "build", "pack", f"Easel-{version}-windows-x64"))
     ap.add_argument("--no-zip", action="store_true")
     ap.add_argument("--prebuilt-dir", metavar="路径",
                     help="一份编好的 Easel，认两种布局：export-prebuilt.bat 产出的导出目录"
@@ -412,7 +419,7 @@ def main():
     # 预编译导出脚本（把编好的东西打包发给维护者）
     with open(os.path.join(out, "export-prebuilt.bat"), "w", encoding="gbk", newline="\r\n") as f:
         f.write(PREBUILT_BAT)
-    readme = os.path.join(ROOT, "windows-green", "README.md")
+    readme = os.path.join(ROOT, "docs", "windows-toolbox.md")
     if os.path.exists(readme):
         shutil.copy2(readme, os.path.join(out, "README.md"))
 
@@ -422,7 +429,7 @@ def main():
         print(f"好了：{out}")
         return 0
 
-    zip_path = os.path.join(ROOT, "windows-green", "代码酷C++工具箱.zip")
+    zip_path = os.path.join(ROOT, "build", "pack", f"Easel-{version}-windows-x64.zip")
     print("=== 打包（要等一会儿）===")
     if os.path.exists(zip_path):
         os.remove(zip_path)

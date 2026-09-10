@@ -21,7 +21,7 @@ namespace {
 // 这些不进导出包：构建产物、版本库、编辑器的垃圾、自己的历史导出
 bool skipName(const std::string& name, bool isDir) {
     static const char* const kDirs[] = {"build",   "dist",  ".git",  ".cache", "__pycache__",
-                                        ".idea",   ".vs",   "vendor-cache", "windows-green",
+                                        ".idea",   ".vs",   "vendor-cache",
                                         "node_modules", nullptr};
     static const char* const kFiles[] = {".DS_Store", "imgui.ini", ".gitkeep", "a.out", "solver",
                                          "solver.exe", "app", "app.exe", nullptr};

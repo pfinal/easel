@@ -68,7 +68,7 @@ python3 scripts/vendor.py         # 1. 九个依赖抓到 vendor/（17 MB）
 python3 scripts/make_toolbox.py   # 2. 下三个组件、组装、打包
 ```
 
-产出 `windows-green/代码酷C++工具箱.zip`。之后每台机器只要这一个文件。
+产出 `build/pack/Easel-0.1.1-windows-x64.zip`。之后每台机器只要这一个文件。
 
 三个组件（w64devkit / CMake / Ninja）都是**纯 zip**，版本在 `scripts/make_toolbox.py`
 的 `COMPONENTS` 里锁死，所以每次组出来的包一模一样。要升级就改那里。
@@ -147,7 +147,7 @@ build\mingw\bin\app.exe --open data\example.json --solve
 
 ## 状态
 
-zip **已经组出来了**（`windows-green/代码酷C++工具箱.zip`，151 MB），内容也核对过：
+zip **已经组出来了**（`build/pack/Easel-0.1.1-windows-x64.zip`，151 MB），内容也核对过：
 g++ / gdb / cmake / ninja / Easel / 模板 / 依赖源码，17139 个文件都在。
 
 但**一次都没在 Windows 上跑过**（这边还没有 Windows 机器），9/21 检查点 #1 实测。
