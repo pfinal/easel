@@ -1,0 +1,5 @@
+add_executable(easel_example_sort main.cpp)
+target_link_libraries(easel_example_sort PRIVATE easel::easel)
+if(MSVC)
+  target_compile_options(easel_example_sort PRIVATE /utf-8)
+endif()

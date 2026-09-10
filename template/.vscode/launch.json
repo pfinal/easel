@@ -1,0 +1,96 @@
+{
+  // 三个入口的 F5 配置（D-23）。断点打在 src/solver.cpp 上，三个都能停。
+  //
+  // Windows 这边默认按「绿色工具箱」配的：MinGW 的 g++ + gdb，构建目录 build/mingw。
+  // 如果你装的是 Visual Studio，把每个配置的 windows 段改成：
+  //     "type": "cppvsdbg",
+  //     "program": "${workspaceFolder}/build/default/bin/xxx.exe",
+  //     "preLaunchTask": "构建 default"
+  // 并删掉 MIMode / miDebuggerPath 两行。
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "1 · Solver 命令行（算法主战场）",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/default/bin/solver",
+      "args": ["data/example.json"],
+      "cwd": "${workspaceFolder}",
+      "stopAtEntry": false,
+      "externalConsole": false,
+      "MIMode": "lldb",
+      "preLaunchTask": "构建 default",
+      "osx": { "MIMode": "lldb" },
+      "linux": { "MIMode": "gdb" },
+      "windows": {
+        "MIMode": "gdb",
+        "miDebuggerPath": "gdb.exe",
+        "program": "${workspaceFolder}/build/mingw/bin/solver.exe",
+        "preLaunchTask": "构建 mingw",
+        "externalConsole": false
+      }
+    },
+    {
+      "name": "2 · Tests（对拍与回归）",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/default/bin/tests",
+      "args": ["--success=false"],
+      "cwd": "${workspaceFolder}",
+      "stopAtEntry": false,
+      "externalConsole": false,
+      "MIMode": "lldb",
+      "preLaunchTask": "构建 default",
+      "osx": { "MIMode": "lldb" },
+      "linux": { "MIMode": "gdb" },
+      "windows": {
+        "MIMode": "gdb",
+        "miDebuggerPath": "gdb.exe",
+        "program": "${workspaceFolder}/build/mingw/bin/tests.exe",
+        "preLaunchTask": "构建 mingw",
+        "externalConsole": false
+      }
+    },
+    {
+      "name": "3 · App 图形界面",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/default/bin/app",
+      "args": ["--open", "data/example.json", "--solve"],
+      "cwd": "${workspaceFolder}",
+      "stopAtEntry": false,
+      "externalConsole": false,
+      "MIMode": "lldb",
+      "preLaunchTask": "构建 default",
+      "osx": { "MIMode": "lldb" },
+      "linux": { "MIMode": "gdb" },
+      "windows": {
+        "MIMode": "gdb",
+        "miDebuggerPath": "gdb.exe",
+        "program": "${workspaceFolder}/build/mingw/bin/app.exe",
+        "preLaunchTask": "构建 mingw"
+      }
+    },
+    {
+      "name": "4 · Solver 复现一个调试用例",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/default/bin/solver",
+      "args": ["--case", "debug/case-001.json"],
+      "cwd": "${workspaceFolder}",
+      "stopAtEntry": false,
+      "externalConsole": false,
+      "MIMode": "lldb",
+      "preLaunchTask": "构建 default",
+      "osx": { "MIMode": "lldb" },
+      "linux": { "MIMode": "gdb" },
+      "windows": {
+        "MIMode": "gdb",
+        "miDebuggerPath": "gdb.exe",
+        "program": "${workspaceFolder}/build/mingw/bin/solver.exe",
+        "preLaunchTask": "构建 mingw",
+        "externalConsole": false
+      }
+    }
+  ]
+}

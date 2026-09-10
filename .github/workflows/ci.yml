@@ -1,0 +1,171 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # ==========================================================================
+  #  铁律（D-23 第 1 条）：solver.cpp 必须能被一条裸 g++ 命令编译。
+  #  这个任务就是那条规矩的执行者 —— 它跑得最快，所以放在最前面。
+  # ==========================================================================
+  bare-compile:
+    name: 裸编译 solver.cpp（不用 CMake、不用 GUI）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: dist/easel_core.h 是不是最新的
+        run: python3 scripts/amalgamate.py --check
+      - name: g++ 一条命令编译并运行
+        run: |
+          cd template
+          g++ -std=c++17 -Wall -Wextra -DEASEL_STANDALONE src/solver.cpp -o solver
+          ./solver data/example.json
+          ./solver --doctor
+          ./solver --seed 7 --iters 50 --dump-frame 0
+      - name: clang 也来一遍
+        run: |
+          cd template
+          clang++ -std=c++17 -Wall -Wextra -DEASEL_STANDALONE src/solver.cpp -o solver_clang
+          ./solver_clang data/example.json
+
+  # ==========================================================================
+  #  三平台构建 + 测试
+  # ==========================================================================
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,  name: Linux   }
+          - { os: macos-latest,   name: macOS   }
+          - { os: windows-latest, name: Windows }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 装 Linux 上的图形依赖
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-dev libx11-dev libxrandr-dev \
+            libxinerama-dev libxcursor-dev libxi-dev libxkbcommon-dev libgtk-3-dev ninja-build
+
+      - name: 配置
+        run: cmake --preset default
+
+      - name: 构建
+        run: cmake --build --preset default --parallel
+
+      - name: 测试
+        run: ctest --preset default
+
+      - name: 模板工程也要能构建（三个 target）
+        run: |
+          cmake -S template -B template/build/default -DCMAKE_BUILD_TYPE=RelWithDebInfo -DEASEL_DIR=${{ github.workspace }}
+          cmake --build template/build/default --parallel
+        shell: bash
+
+      - name: 模板工程的测试
+        run: ctest --test-dir template/build/default --output-on-failure
+
+  # ==========================================================================
+  #  D-28 的验收：编辑栏里那个「导出工程」出来的东西，必须离了 Easel 也能编。
+  #  这条规矩同样交给 CI 执行 —— 导出、断网、不给任何 cmake 参数，从头编一遍。
+  # ==========================================================================
+  export-standalone:
+    name: 导出的工程要能独立编译（不联网、不给 EASEL_DIR）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 装图形依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-dev libx11-dev libxrandr-dev \
+            libxinerama-dev libxcursor-dev libxi-dev libxkbcommon-dev libgtk-3-dev ninja-build
+
+      - name: 依赖源码抓进 vendor/（「不联网也能编」这句话验的就是它）
+        run: python3 scripts/vendor.py
+
+      - name: 构建模板工程
+        run: |
+          cmake -S template -B template/build/ci -DCMAKE_BUILD_TYPE=Release -DEASEL_DIR=$PWD
+          cmake --build template/build/ci --parallel
+
+      - name: 导出（不开窗口，--export 在建窗口之前就返回了）
+        run: template/build/ci/bin/app --export /tmp/out/作品 --name 作品
+
+      - name: 自检里不许有 [×]
+        run: |
+          cat /tmp/out/作品/导出自检.txt
+          if grep -q '\[×\]' /tmp/out/作品/导出自检.txt; then exit 1; fi
+
+      - name: 导出的工程：一条 g++ 编算法（脱开 Easel 的那一半）
+        run: |
+          cd /tmp/out/作品
+          g++ -std=c++17 -Wall -Wextra -DEASEL_STANDALONE src/solver.cpp -o solver
+          ./solver data/example.json
+
+      - name: 工作台新建的工程：根目录只有学生自己的东西（D-30）
+        run: |
+          cmake --preset default
+          cmake --build --preset default --target workbench --parallel
+          # 默认是空工程：三个文件（D-32）
+          ./build/default/workbench --new /tmp/blank --name 空工程
+          test "$(cd /tmp/blank/空工程 && ls | wc -l)" -eq 2   # README.md + src/
+          # 完整骨架：这一份往下继续编
+          ./build/default/workbench --new /tmp/np --name 测试作品 --full
+          cd /tmp/np/测试作品
+          ls -a
+          # 脚手架一律不许出现在根目录
+          for junk in CMakeLists.txt CMakePresets.json 跑.sh 跑.bat run.bat docs build tests \
+                      src/easel_core.h; do
+            if [ -e "$junk" ]; then echo "根目录里不该有 $junk"; exit 1; fi
+          done
+          test -f src/app.cpp && test -f src/solver.cpp && test -f README.md
+          test -f .easel/easel_core.h && test -f .easel/CMakeLists.txt
+          grep -q '"files.exclude"' .vscode/settings.json
+          # 单头库搬走了，裸 g++ 还得能编（D-23 那条铁律不许因为折叠布局失效）
+          g++ -std=c++17 -Wall -Wextra -DEASEL_STANDALONE -I.easel src/solver.cpp -o solver
+          ./solver data/example.json
+          # 生成的那份构建脚本也要能编出界面
+          cmake -S .easel -B .easel/build -DCMAKE_BUILD_TYPE=Release -DEASEL_DIR=$GITHUB_WORKSPACE
+          cmake --build .easel/build --target app --parallel
+          test -f .easel/build/bin/app
+
+      - name: 新建的工程导出之后：展开成标准工程，评委那边不给参数也能编（D-30）
+        run: |
+          cd /tmp/np/测试作品
+          ./.easel/build/bin/app --export /tmp/np/导出/测试作品 --name 测试作品
+          cd /tmp/np/导出/测试作品
+          test -f CMakeLists.txt && test -f src/easel_core.h
+          test ! -d .easel
+          if grep -q '\[×\]' 导出自检.txt; then cat 导出自检.txt; exit 1; fi
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release 2>&1 | tee cfg.log
+          grep -q "本次构建完全离线" cfg.log
+          cmake --build build --parallel
+
+      - name: 导出的工程：完全离线编出界面（不给 EASEL_DIR）
+        run: |
+          cd /tmp/out/作品
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release 2>&1 | tee cfg.log
+          grep -q "本次构建完全离线" cfg.log
+          grep -q "用包里自带的 Easel" cfg.log
+          cmake --build build --parallel
+          ctest --test-dir build --output-on-failure
+
+  # ==========================================================================
+  #  Windows 的 DX11 后端（还没在真机上验过，先让 CI 保证它至少能编过）
+  # ==========================================================================
+  windows-dx11:
+    name: Windows · DirectX 11 后端
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake --preset dx11
+      - run: cmake --build --preset dx11 --parallel

@@ -1,0 +1,2 @@
+# .bat 是 GBK + CRLF，别让 git 动它
+*.bat -text -diff

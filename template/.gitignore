@@ -1,0 +1,9 @@
+build/
+dist/
+solver
+solver.exe
+a.out
+*.o
+.DS_Store
+imgui.ini
+compile_commands.json

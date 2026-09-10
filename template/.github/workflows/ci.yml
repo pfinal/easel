@@ -1,0 +1,37 @@
+name: CI
+
+on: [push, pull_request, workflow_dispatch]
+
+jobs:
+  # solver.cpp 必须能被一条裸 g++ 命令编译 —— 这条规矩由 CI 强制。
+  bare-compile:
+    name: 裸编译 solver.cpp
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          g++ -std=c++17 -Wall -Wextra -DEASEL_STANDALONE src/solver.cpp -o solver
+          ./solver data/example.json
+          ./solver --doctor
+
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,  name: Linux   }
+          - { os: macos-latest,   name: macOS   }
+          - { os: windows-latest, name: Windows }
+    steps:
+      - uses: actions/checkout@v4
+      - name: 装 Linux 上的图形依赖
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-dev libx11-dev libxrandr-dev \
+            libxinerama-dev libxcursor-dev libxi-dev libxkbcommon-dev libgtk-3-dev
+      - run: cmake --preset default
+      - run: cmake --build --preset default --parallel
+      - run: ctest --preset default

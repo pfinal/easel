@@ -1,0 +1,49 @@
+# ============================================================================
+#  easelConfig.cmake —— 预编译好的 Easel（D-26 绿色工具箱里的 easel/prebuilt/）
+#
+#  学生工程里怎么用：
+#      set(easel_DIR "<工具箱>/easel/prebuilt/lib/cmake/easel")
+#      find_package(easel CONFIG REQUIRED)
+#      target_link_libraries(app PRIVATE easel::easel)
+#  ImGui / ImPlot / GLFW / nfd / nlohmann_json 的头和库全都跟着自动带上，
+#  连 macOS 的 framework、MinGW 的 -static、Windows 的 dbghelp 也一样。
+#
+#  可搬迁：这个文件里一个绝对路径都没有。@PACKAGE_INIT@ 按本文件自己的位置反推
+#  PACKAGE_PREFIX_DIR，所以整个 prebuilt/ 目录随便搬到哪、改什么名字都还能用
+#  （工具箱本来就是解压到学生自己挑的目录里的）。
+# ============================================================================
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+# 四个依赖装在同一个 prefix 里（lib/cmake/*、share/cmake/*）。把 prefix 临时顶到
+# CMAKE_PREFIX_PATH 最前面让它们被找到，找完还原 —— 不去改调用者的搜索路径。
+# 还原之后 glfw / nfd / nlohmann_json / doctest 这几个 IMPORTED 目标已经建好了，
+# 学生工程里直接写 doctest::doctest 就行，不用自己再 find_package 一次。
+set(_easel_saved_prefix_path "${CMAKE_PREFIX_PATH}")
+list(INSERT CMAKE_PREFIX_PATH 0 "${PACKAGE_PREFIX_DIR}")
+
+find_dependency(nlohmann_json)   # core.h 要 nlohmann/json.hpp，是 easel 的 PUBLIC 依赖
+find_dependency(glfw3)           # 窗口 / 输入；easel_imgui 的 PUBLIC 依赖
+find_dependency(nfd)             # 打开 / 保存对话框
+find_dependency(doctest)         # 学生工程的 tests 目标用 doctest::doctest
+
+# 渲染后端是编包时定死的（D-26：包和源码树必须说同一件事）
+set(EASEL_BACKEND_NAME "@EASEL_BACKEND_RESOLVED@")
+if(NOT EASEL_BACKEND_NAME STREQUAL "dx11")
+  # Linux 上 FindOpenGL 会为 GLVND / legacy 二选一发警告，明确选 GLVND
+  if(NOT DEFINED OpenGL_GL_PREFERENCE)
+    set(OpenGL_GL_PREFERENCE GLVND)
+  endif()
+  find_dependency(OpenGL)        # OpenGL::GL（MinGW 下就是 opengl32）
+endif()
+if(UNIX AND NOT APPLE)
+  find_dependency(Threads)       # miniaudio 的 ALSA / PulseAudio 后端要 pthread
+endif()
+
+set(CMAKE_PREFIX_PATH "${_easel_saved_prefix_path}")
+unset(_easel_saved_prefix_path)
+
+include("${CMAKE_CURRENT_LIST_DIR}/easelTargets.cmake")
+
+check_required_components(easel)

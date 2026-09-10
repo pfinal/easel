@@ -1,0 +1,42 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "构建 default",
+      "type": "shell",
+      "command": "cmake",
+      "args": ["--build", "--preset", "default"],
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": ["$gcc", "$msCompile"]
+    },
+    {
+      "label": "构建 debug（开越界检查）",
+      "type": "shell",
+      "command": "cmake",
+      "args": ["--build", "--preset", "debug"],
+      "problemMatcher": ["$gcc", "$msCompile"]
+    },
+    {
+      "label": "配置",
+      "type": "shell",
+      "command": "cmake",
+      "args": ["--preset", "default"],
+      "problemMatcher": []
+    },
+    {
+      "label": "跑测试",
+      "type": "shell",
+      "command": "ctest",
+      "args": ["--preset", "default"],
+      "group": { "kind": "test", "isDefault": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "裸编译 solver.cpp（一条命令，不用 CMake）",
+      "type": "shell",
+      "command": "g++",
+      "args": ["-std=c++17", "-g", "-DEASEL_STANDALONE", "src/solver.cpp", "-o", "solver"],
+      "problemMatcher": ["$gcc"]
+    }
+  ]
+}
