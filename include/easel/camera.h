@@ -41,7 +41,8 @@ public:
     void        reset() { target_ = {0, 0}; scale_ = 1.0; }
 
 private:
-    friend class App;   // setViewport/handleInput 只在 App::run() 里调，其余都不需要
+    friend class App;       // setViewport/handleInput 只在 App::run() 里调，其余都不需要
+    friend class Graphics;  // Graphics 自己那台 1:1 无缩放的相机，创建/改尺寸时要摆一次 setViewport
 
     void setViewport(const Rect& px);
     void handleInput(bool hovered);

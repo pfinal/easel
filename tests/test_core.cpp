@@ -19,6 +19,13 @@ TEST_CASE("Vec2 基本运算") {
     CHECK(r.y == doctest::Approx(1.0).epsilon(1e-6));
 }
 
+TEST_CASE("kPi / kTau / radians / degrees") {
+    CHECK(radians(180.0) == doctest::Approx(kPi));
+    CHECK(degrees(kPi) == doctest::Approx(180.0));
+    CHECK(radians(360.0) == doctest::Approx(kTau));
+    CHECK(degrees(0.0) == doctest::Approx(0.0));
+}
+
 TEST_CASE("Rect 包围盒与命中") {
     Rect r = Rect::bounding({{0, 0}, {10, 5}, {-2, 7}});
     CHECK(r.left() == doctest::Approx(-2));

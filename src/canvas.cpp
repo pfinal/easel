@@ -1,6 +1,10 @@
 // Easel — canvas.cpp
 #include "internal.h"
 
+// textWorld() 逐字符贴图要拿 ImFontBaked/FindGlyph 量字形，还要 ImTextCharFromUtf8
+// 挨个解码码点——这几个都只在 imgui_internal.h 里，公开头文件不碰它，这里是实现细节。
+#include <imgui_internal.h>
+
 namespace easel {
 
 using internal::col;
@@ -8,7 +12,8 @@ using internal::ev;
 using internal::iv;
 
 namespace {
-constexpr double kTau = 6.283185307179586;   // 一整圈的弧度
+// kTau（一整圈的弧度）现在是 core.h 里的 easel::kTau，这里不再重复定义
+// （两份同名常量会让 arc() 里的 `kTau` 变成有歧义的查找，编译不过）。
 
 // 椭圆上采一圈世界点。圆就是 rx == ry 的椭圆。
 void ellipseWorldPoints(const Vec2& c, double rx, double ry, int seg, std::vector<Vec2>& out) {
@@ -18,6 +23,14 @@ void ellipseWorldPoints(const Vec2& c, double rx, double ry, int seg, std::vecto
         double t = kTau * i / seg;
         out.push_back({c.x + rx * std::cos(t), c.y + ry * std::sin(t)});
     }
+}
+
+// 读一个 UTF-8 码点，返回吃掉的字节数。ASCII 走快路径，其余交给 ImGui 自己的解码器
+// （textWorld() 逐字符取字形要一个一个码点地取，标准库没有现成的这个）。
+int nextCodepoint(const char* s, const char* end, unsigned int* cp) {
+    unsigned char c0 = (unsigned char)*s;
+    if (c0 < 0x80) { *cp = c0; return 1; }
+    return ImTextCharFromUtf8(cp, s, end);
 }
 }  // namespace
 
@@ -263,6 +276,122 @@ void Canvas::text(const Vec2& at, const std::string& s, Align align) {
     dl->AddText(f, size, iv(p), col(applyAlpha(c)), s.c_str());
 }
 
+// 当前 textSize() 下量一下这段文字多宽。不画东西，不需要 dl_（画布不在 begin/end
+// 之间也能量），只要有字体就行。除以 dpi_ 换回逻辑像素，和 textSize()/text() 的
+// 单位系统对上——st_.fontPx * dpi_ 是量的时候用的真实像素，st_.fontPx 本身才是
+// 学生设的那个字号。
+double Canvas::textWidth(const std::string& s) const {
+    if (s.empty()) return 0.0;
+    ImFont* f = ImGui::GetFont();
+    if (!f) return 0.0;
+    float  size = (float)(st_.fontPx * dpi_);
+    ImVec2 sz = f->CalcTextSizeA(size, FLT_MAX, 0.f, s.c_str());
+    return dpi_ > 0.f ? (double)sz.x / dpi_ : (double)sz.x;
+}
+
+// 字号是世界单位，字形跟随当前变换（rotate/scale 都跟）——和 text() 反着来。
+// 走的路：逐字符四边形贴图。字体在一个跟当前缩放匹配的像素尺寸下 bake（只影响贴图
+// 清不清晰，字最终画多大完全由 sizeWorld 和 mat_/zoom() 决定），每个字符量出它在
+// 那个 baked 字号下的 X0/Y0/X1/Y1 偏移和 U/V，换算成世界单位，四个角和 image() 一样
+// 都过 mat_ 再 toScreen，用 AddImageQuad 贴上去。比 text() 贵得多（每个字一次 draw
+// call），别拿它画成千上万个标签。
+void Canvas::textWorld(const Vec2& at, const std::string& s, double sizeWorld, Align align) {
+    if (!dl_ || s.empty() || sizeWorld <= 0) return;
+    ImDrawList* dl = (ImDrawList*)dl_;
+    ImFont*     f = ImGui::GetFont();
+    ++stats_.primitives;
+    ++stats_.texts;
+
+    // 挑一个够清晰的栅格化尺寸：按当前缩放换算成像素，只决定贴图分辨率。
+    float px = (float)(sizeWorld * zoom() * dpi_);
+    if (st_.alpha <= 0 || px < 1.f) { ++stats_.invisible; return; }
+    ImFontBaked* baked = f->GetFontBaked(px);
+    double       k = sizeWorld / (double)baked->Size;   // 「baked 像素」换成「世界单位」
+
+    Color        txt = st_.hasFill ? st_.fillColor : st_.strokeColor;
+    ImU32        tint = col(applyAlpha(txt));
+    ImTextureRef texRef = f->OwnerAtlas->TexRef;
+
+    std::vector<Vec2> corners;   // 攒起来算这一整段文字的可见性
+    size_t             lineStart = 0;
+    int                lineIdx = 0;
+    while (lineStart <= s.size()) {
+        size_t      nl = s.find('\n', lineStart);
+        const char* lb = s.c_str() + lineStart;
+        const char* le = s.c_str() + (nl == std::string::npos ? s.size() : nl);
+
+        // 第一遍：量这一行的宽度（世界单位），给 Center/Right 对齐用。
+        double width = 0;
+        for (const char* p = lb; p < le;) {
+            unsigned int cp = 0;
+            p += nextCodepoint(p, le, &cp);
+            width += baked->GetCharAdvance((ImWchar)cp) * k;
+        }
+        double penX = (align == Align::Center) ? -width * 0.5 : (align == Align::Right) ? -width : 0.0;
+        double penY = lineIdx * sizeWorld;   // 行高按字号近似（和 ImGui CalcTextSizeA 一致）
+
+        for (const char* p = lb; p < le;) {
+            unsigned int cp = 0;
+            p += nextCodepoint(p, le, &cp);
+            const ImFontGlyph* g = baked->FindGlyph((ImWchar)cp);
+            if (g && g->Visible) {
+                double x0 = penX + g->X0 * k, x1 = penX + g->X1 * k;
+                double y0 = penY + g->Y0 * k, y1 = penY + g->Y1 * k;
+                Vec2 s00 = project(at + Vec2{x0, y0});
+                Vec2 s10 = project(at + Vec2{x1, y0});
+                Vec2 s11 = project(at + Vec2{x1, y1});
+                Vec2 s01 = project(at + Vec2{x0, y1});
+                corners.push_back(s00);
+                corners.push_back(s11);
+                // 彩色字形（罕见，比如表情符号）忽略染色，只保留我们要的 alpha——和
+                // ImGui RenderText 对 glyph->Colored 的处理一致。
+                ImU32 c2 = g->Colored ? (tint | ~IM_COL32_A_MASK) : tint;
+                dl->AddImageQuad(texRef, iv(s00), iv(s10), iv(s11), iv(s01), ImVec2(g->U0, g->V0),
+                                 ImVec2(g->U1, g->V0), ImVec2(g->U1, g->V1), ImVec2(g->U0, g->V1), c2);
+            }
+            penX += baked->GetCharAdvance((ImWchar)cp) * k;
+        }
+
+        if (nl == std::string::npos) break;
+        lineStart = nl + 1;
+        ++lineIdx;
+    }
+    if (corners.empty()) { ++stats_.invisible; return; }
+    if (!Rect::bounding(corners).overlaps(screen())) ++stats_.offscreen;
+}
+
+// textWorld() 的配套测量：不画东西，只要知道这段文字在给定世界字号下有多宽。
+// 用当前 zoom() 换算出一个够精细的 baked 分辨率（只影响测量精度，不影响结果——
+// GetCharAdvance 量出来的值再乘 k 换回世界单位，跟选了哪个 baked 分辨率无关），
+// 和 textWorld() 画字用的是同一套字形数据，量出来的宽度就是画出来会占的宽度。
+// 多行文字（含 '\n'）取最长一行。
+double Canvas::textWidthWorld(const std::string& s, double sizeWorld) const {
+    if (s.empty() || sizeWorld <= 0) return 0.0;
+    ImFont* f = ImGui::GetFont();
+    if (!f) return 0.0;
+    float        px = (float)std::max(1.0, sizeWorld * zoom() * (double)dpi_);
+    ImFontBaked* baked = f->GetFontBaked(px);
+    double       k = sizeWorld / (double)baked->Size;   // 「baked 像素」换成「世界单位」
+
+    double maxWidth = 0.0;
+    size_t lineStart = 0;
+    while (lineStart <= s.size()) {
+        size_t      nl = s.find('\n', lineStart);
+        const char* lb = s.c_str() + lineStart;
+        const char* le = s.c_str() + (nl == std::string::npos ? s.size() : nl);
+        double      width = 0;
+        for (const char* p = lb; p < le;) {
+            unsigned int cp = 0;
+            p += nextCodepoint(p, le, &cp);
+            width += baked->GetCharAdvance((ImWchar)cp) * k;
+        }
+        maxWidth = std::max(maxWidth, width);
+        if (nl == std::string::npos) break;
+        lineStart = nl + 1;
+    }
+    return maxWidth;
+}
+
 void Canvas::image(const Texture& t, const Rect& worldRect) {
     image(t, worldRect, Rect(0, 0, (double)t.w, (double)t.h));
 }
@@ -414,6 +543,8 @@ void Canvas::draw(const Layer& layer) {
             case Layer::Kind::Text:     text(c.p0, c.txt, c.align); break;
             case Layer::Kind::Image:    image(c.tex, c.box); break;
             case Layer::Kind::ImageSub: image(c.tex, c.box, c.src); break;
+            case Layer::Kind::Arc:      arc(c.p0, c.r1, c.a0, c.a1, c.closed); break;
+            case Layer::Kind::Bezier:   bezier(c.p0, c.p1, c.p2, c.p3); break;
         }
         pop();
     }
@@ -435,62 +566,153 @@ void Layer::limit(size_t maxCommands) {
     while (cmds_.size() > limit_) cmds_.pop_front();
 }
 
+// 有 xf_（follow() 设的）就把点先过一遍再存；默认 xf_ 是单位阵，行为和以前一样。
 void Layer::line(const Vec2& a, const Vec2& b) {
     Cmd& c = push(Kind::Line);
-    c.p0 = a;
-    c.p1 = b;
+    c.p0 = xf_.apply(a);
+    c.p1 = xf_.apply(b);
 }
 void Layer::polyline(const std::vector<Vec2>& pts, bool closed) {
     Cmd& c = push(Kind::Polyline);
-    c.pts = pts;
+    c.pts.reserve(pts.size());
+    for (const Vec2& p : pts) c.pts.push_back(xf_.apply(p));
     c.closed = closed;
 }
+// 半径按 xf_ 的「统一缩放因子」sqrt(|det|) 一起缩：旋转不改变半径，非等比缩放本来就
+// 画不出真圆，这和 Canvas::circle() 遇到非单位阵时的近似处理是同一个道理。
 void Layer::circle(const Vec2& center, double radiusWorld) {
     Cmd& c = push(Kind::Circle);
-    c.p0 = center;
-    c.r1 = radiusWorld;
+    c.p0 = xf_.apply(center);
+    c.r1 = radiusWorld * followScale();
 }
 void Layer::ellipse(const Vec2& center, double rxWorld, double ryWorld) {
     Cmd& c = push(Kind::Ellipse);
-    c.p0 = center;
-    c.r1 = rxWorld;
-    c.r2 = ryWorld;
+    c.p0 = xf_.apply(center);
+    double sc = followScale();
+    c.r1 = rxWorld * sc;
+    c.r2 = ryWorld * sc;
 }
+// dot() 的半径是屏幕像素，和 Canvas::dot() 一样不受变换影响，只有中心点跟着走。
 void Layer::dot(const Vec2& center, double radiusPx) {
     Cmd& c = push(Kind::Dot);
-    c.p0 = center;
+    c.p0 = xf_.apply(center);
     c.r1 = radiusPx;
 }
 void Layer::rect(const Rect& r) {
-    Cmd& c = push(Kind::Rect);
-    c.box = r;
+    if (xf_.identity()) {
+        Cmd& c = push(Kind::Rect);
+        c.box = r;
+        return;
+    }
+    // 转过之后矩形不再轴对齐：存成四个点的多边形（和 Canvas::rect() 遇到旋转时
+    // 退化成四边形是同一个道理）。
+    Cmd& c = push(Kind::Polygon);
+    c.pts = {xf_.apply(r.min()), xf_.apply({r.right(), r.top()}), xf_.apply(r.max()),
+              xf_.apply({r.left(), r.bottom()})};
+    c.closed = true;
 }
 void Layer::triangle(const Vec2& a, const Vec2& b, const Vec2& t) {
     Cmd& c = push(Kind::Triangle);
-    c.p0 = a;
-    c.p1 = b;
-    c.p2 = t;
+    c.p0 = xf_.apply(a);
+    c.p1 = xf_.apply(b);
+    c.p2 = xf_.apply(t);
 }
 void Layer::polygon(const std::vector<Vec2>& pts) {
     Cmd& c = push(Kind::Polygon);
-    c.pts = pts;
+    c.pts.reserve(pts.size());
+    for (const Vec2& p : pts) c.pts.push_back(xf_.apply(p));
 }
+// 和 Canvas::text() 一样，只有锚点跟变换——字形本身不转。follow() 挪得动这行字，
+// 转不动这行字的字形；想要字形也转用 c.textWorld()（Layer 存不了那个）。
 void Layer::text(const Vec2& at, const std::string& s, Align align) {
     Cmd& c = push(Kind::Text);
-    c.p0 = at;
+    c.p0 = xf_.apply(at);
     c.txt = s;
     c.align = align;
+}
+Rect Layer::followedBox(const Rect& r) const {
+    if (xf_.identity()) return r;
+    Vec2 a = xf_.apply(r.min()), b = xf_.apply({r.right(), r.top()});
+    Vec2 cc = xf_.apply(r.max()), d = xf_.apply({r.left(), r.bottom()});
+    return Rect::bounding({a, b, cc, d});   // 有旋转时只是包围盒，见头文件里的说明
 }
 void Layer::image(const Texture& t, const Rect& worldRect) {
     Cmd& c = push(Kind::Image);
     c.tex = t;
-    c.box = worldRect;
+    c.box = followedBox(worldRect);
 }
 void Layer::image(const Texture& t, const Rect& worldRect, const Rect& srcPx) {
     Cmd& c = push(Kind::ImageSub);
     c.tex = t;
-    c.box = worldRect;
+    c.box = followedBox(worldRect);
     c.src = srcPx;
+}
+// 圆心和半径的处理同 circle()；角度还要加上 xf_ 的旋转角，不然「转起来」只挪了
+// 圆心、弧本身的朝向没跟着转。
+void Layer::arc(const Vec2& c, double radiusWorld, double a0, double a1, bool pie) {
+    Cmd& cmd = push(Kind::Arc);
+    double rot = followRotation();
+    cmd.p0 = xf_.apply(c);
+    cmd.r1 = radiusWorld * followScale();
+    cmd.a0 = a0 + rot;
+    cmd.a1 = a1 + rot;
+    cmd.closed = pie;
+}
+// 贝塞尔是精确的：仿射变换和三次贝塞尔可以交换顺序（和 Canvas::bezier() 的注释
+// 是同一个道理），四个控制点各自过 xf_ 就行，不用像 circle/arc 那样近似。
+void Layer::bezier(const Vec2& p0, const Vec2& p1, const Vec2& p2, const Vec2& p3) {
+    Cmd& c = push(Kind::Bezier);
+    c.p0 = xf_.apply(p0);
+    c.p1 = xf_.apply(p1);
+    c.p2 = xf_.apply(p2);
+    c.p3 = xf_.apply(p3);
+}
+// 和 Canvas 的 beginShape/vertex/endShape 一样的状态机，只是攒点的地方换成了
+// Layer 自己的 shape_（vertex() 落进去的时候就过一遍 xf_，endShape() 直接存，不用
+// 再借 Canvas 的 polygon()/polyline() 转一遍，免得二次变换）。
+void Layer::beginShape() {
+    shape_.clear();
+    inShape_ = true;
+}
+void Layer::vertex(const Vec2& p) {
+    if (inShape_) shape_.push_back(xf_.apply(p));
+}
+void Layer::endShape(bool closed) {
+    if (!inShape_) return;
+    inShape_ = false;
+    Cmd& c = push(closed ? Kind::Polygon : Kind::Polyline);
+    c.pts = shape_;
+    c.closed = closed;
+    shape_.clear();
+}
+
+// 所有记下来的图元的世界坐标包围盒。dot() 只算中心（半径是像素，量不出世界范围）；
+// text() 只算锚点（字形大小要量字体才知道，Layer 不该为了这个背上字体依赖）。
+Rect Layer::bounds() const {
+    std::vector<Vec2> pts;
+    auto              add = [&](const Vec2& p) { pts.push_back(p); };
+    auto              addR = [&](const Vec2& c, double r) {
+        pts.push_back(c - Vec2{r, r});
+        pts.push_back(c + Vec2{r, r});
+    };
+    for (const Cmd& c : cmds_) {
+        switch (c.kind) {
+            case Kind::Line:     add(c.p0); add(c.p1); break;
+            case Kind::Polyline:
+            case Kind::Polygon:  for (const Vec2& p : c.pts) add(p); break;
+            case Kind::Circle:   addR(c.p0, c.r1); break;
+            case Kind::Ellipse:  addR(c.p0, std::max(c.r1, c.r2)); break;
+            case Kind::Dot:      add(c.p0); break;
+            case Kind::Rect:     add(c.box.min()); add(c.box.max()); break;
+            case Kind::Triangle: add(c.p0); add(c.p1); add(c.p2); break;
+            case Kind::Text:     add(c.p0); break;
+            case Kind::Image:
+            case Kind::ImageSub: add(c.box.min()); add(c.box.max()); break;
+            case Kind::Arc:      addR(c.p0, c.r1); break;
+            case Kind::Bezier:   add(c.p0); add(c.p1); add(c.p2); add(c.p3); break;
+        }
+    }
+    return Rect::bounding(pts);
 }
 
 }  // namespace easel

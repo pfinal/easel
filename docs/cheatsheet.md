@@ -33,6 +33,7 @@ Rect r(x, y, w, h);            Rect::bounding(点数组)   Rect::fromCenter(c, w
                                r.center()  r.contains(p)  r.overlaps(q)  r.expanded(10)
 Color::hex(0x2E7D32)   Color::rgb(46,125,50)   Color::hsv(120, .6, .8)   Color::gray(.5f)
                                c.withAlpha(.4f)  c.lighter()  c.darker()  c.mix(other, t)
+kPi  kTau  radians(deg)  degrees(rad)   // 对应 Processing 的 PI/TWO_PI；MSVC 没有 M_PI，别自己再写一份
 ```
 
 ## 数据与文件
@@ -68,7 +69,7 @@ int main(int argc, char** argv) {
     app.onDraw ([&](easel::Canvas& c){ /* 每帧重画整张画布 */ });
     app.onPanel([&]{ /* 每帧重画右侧面板 */ });
     app.onClick([&](easel::Vec2 w, easel::Mouse b){ /* w 是世界坐标 */ });
-    app.onDrag ([&](const easel::Drag& d){ /* d.start d.current d.delta */ });
+    app.onDrag ([&](const easel::Drag& d){ /* d.start d.current d.delta d.velocity */ });
 
     app.transport(tl);                       // 底部播放条
     app.welcome("标题", "一句话", []{ ... }); // 启动页
@@ -76,6 +77,7 @@ int main(int argc, char** argv) {
     app.status("准备好了");                   // 状态栏文字
     app.statusBar(true);                     // 底部状态栏默认不显示，要用就开（F12 打开时也会临时出现）
     app.frameRate(60);                       // 帧率上限，默认就是 60；垂直同步失效时的兜底
+    app.maxDelta(0.05);                      // dt 上限，默认就是 0.05；窗口被挡一下再回来，dt 不会飙成好几秒
     return app.run();
 }
 ```
@@ -83,7 +85,8 @@ int main(int argc, char** argv) {
 命令行：`app --open data/x.json --solve`（跳过点击） · `--doctor`（自检） ·
 `--debug`（直接开调试台） · `--edit`（直接开编辑栏） · `--edit-run`（开起来就编译运行一次） ·
 `--export <目录>`（导出可独立编译的工程，不开窗口） · `--seed N` ·
-`--frames N --screenshot a.png`（截图） · `--fps N`（帧率上限，`0` = 不限制）
+`--frames N --screenshot a.png`（截图） · `--fps N`（帧率上限，`0` = 不限制） ·
+`--warmup N`（先空转 N 帧只跑逻辑不渲染，再开始正常帧——截「要等几秒才发生」的效果配合 `--frames --screenshot` 用）
 
 ## 工作台 —— 从这里开始（D-29）
 
@@ -139,6 +142,7 @@ c.alpha(0.5)   c.textSize(14)  c.dashed(6, 4)  c.solid()   c.push() / c.pop()
 c.line(a, b);                 c.polyline(点数组, 是否闭合);
 c.circle(中心, 世界半径);      c.dot(中心, 像素半径);      // dot 不随缩放变大
 c.rect(Rect);                 c.text(位置, "字", Align::Center);
+c.textWidth("字")             // 当前 textSize() 下这段字多宽（像素）——排版、右对齐/居中要用
 c.image(tex, Rect);           // Texture tex = easel::loadTexture("assets/map.png");
 
 c.toScreen(w)  c.toWorld(s)  c.world()  c.zoom()  c.mouse()  c.camera()
@@ -174,6 +178,13 @@ void onFrame(double dt) { if (c.hovered()) ink.stroke(色, 2).line(上一个点,
 void onDraw(Canvas& c)  { c.draw(ink); }    // 每帧重放
 ink.limit(3000);                           // 尾巴自动变短，超了丢最早的
 ink.clear();                               // 全部擦除
+```
+
+```cpp
+// Graphics —— 离屏画布：Layer 逐条重放扛不住的积累型效果（流场/涂鸦/长拖尾）用它，O(1)/帧
+Graphics g;  app.onStart([&]{ g.create(1280, 800); });   // 像素尺寸；坐标系是像素，不受主画布相机影响
+app.onFrame([&](double dt){ g.begin().stroke(色, 2).line(a, b); g.end(); });   // 只能在 onStart/onFrame 里 begin/end
+app.onDraw([&](Canvas& c){ c.image(g.texture(), worldRect); });   // 整块贴到主画布；g.clear() 才会真的擦掉
 ```
 
 ```cpp
@@ -217,6 +228,7 @@ tl.play()  tl.pause()  tl.step(±1)  tl.seek(i)  tl.speed(2.0)  tl.fps(30)  tl.l
 ```cpp
 if (ui::section("参数")) { ... }
 ui::slider("温度", &T0, 1.0, 5000.0);   ui::slider("点数", &n, 5, 50);
+ui::sliderCommit("温度", &T0, 1.0, 5000.0);   // 只在松手那一帧返回 true；参数改动要重算时用它，别用 slider
 ui::toggle("显示名称", &show);           ui::button("开始优化", true /*占满宽度*/)
 ui::stat("总里程", 4.72, "公里", 2);     ui::chart("收敛", ys, "总长度");
 ui::title("小标题")  ui::help("灰色说明")  ui::separator()  ui::spacing()  ui::sameLine()

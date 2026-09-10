@@ -34,6 +34,25 @@ bool slider(const char* label, int* v, int lo, int hi) {
     return ImGui::SliderInt(id.c_str(), v, lo, hi);
 }
 
+// 三个都是套一层 slider：内部逐帧照常拖动，只是返回值换成
+// IsItemDeactivatedAfterEdit()——那个只在「这一帧刚刚松手、且值确实变了」时为 true，
+// 拖动过程中的那几十帧全部是 false。参数改动会触发重算的作品用它替掉 slider，
+// 免得拖一下中间状态全部重算一遍，卡成幻灯片。
+bool sliderCommit(const char* label, double* v, double lo, double hi, const char* fmt) {
+    slider(label, v, lo, hi, fmt);
+    return ImGui::IsItemDeactivatedAfterEdit();
+}
+
+bool sliderCommit(const char* label, float* v, float lo, float hi, const char* fmt) {
+    slider(label, v, lo, hi, fmt);
+    return ImGui::IsItemDeactivatedAfterEdit();
+}
+
+bool sliderCommit(const char* label, int* v, int lo, int hi) {
+    slider(label, v, lo, hi);
+    return ImGui::IsItemDeactivatedAfterEdit();
+}
+
 bool toggle(const char* label, bool* v) { return ImGui::Checkbox(label, v); }
 
 bool button(const char* label, bool wide) {

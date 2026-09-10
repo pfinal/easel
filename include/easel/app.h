@@ -16,6 +16,9 @@ struct Drag {
     Vec2  start;        // 世界坐标：按下的地方
     Vec2  current;      // 世界坐标：现在
     Vec2  delta;        // 世界坐标：这一帧移动了多少
+    Vec2  velocity;      // 世界单位/秒，松手那一帧也有效（"甩出去"用它）。
+                          // ended 帧 delta 会被清零，velocity 不会——它记的是松手前
+                          // 最近几帧的平均速度，即使松手前正好停顿了一帧也不会掉到 0。
     Mouse button = Mouse::Left;
     bool  began = false;
     bool  ended = false;
@@ -48,6 +51,10 @@ public:
     // 没装驱动的机器上经常失效，不限帧就会空转烧一个 CPU 核，所以默认给个兜底。
     // `--fps N` 命令行参数会在这句话之后覆盖这里设的值。
     App&         frameRate(double fps);
+    // dt 的上限（秒），默认 0.05（20fps 的一帧）。窗口被挡一下、切到后台再切回来，
+    // 现实里过去的时间可能是好几秒——不夹住的话粒子/物理模拟会一帧瞬移到很远的地方。
+    // 传 0 = 不夹（信任 dt 有多大就是多大，调试单步之类的场景可能想要这样）。
+    App&         maxDelta(double seconds);
     // 工具类程序专用：开启后，如果这一帧没有任何鼠标/键盘输入，且已经空闲超过
     // 0.5 秒，就把这一帧的目标间隔放大到 100ms（10 帧）省电；一有输入、或子进程在
     // 跑（编辑栏编译/运行）、或有 toast/横幅在显示，立刻恢复满速。默认关（作品的
@@ -120,6 +127,8 @@ public:
     //   --frames N         跑 N 帧自动退出（CI / 截图用）
     //   --screenshot <png> 退出前存一张截图
     //   --fps N            帧率上限（0 = 不限制），覆盖 frameRate() 设的值
+    //   --warmup N         进入正常循环前先空转 N 帧（只调 onFrame(dt)，dt 固定 1/60，
+    //                      不渲染）；截「要等几秒才发生」的效果时配合 --frames/--screenshot 用
     // 自己的参数用 easel::cli::args() 取：cli::args().num("iters", 200)
     std::string openPath() const;    // --open 给的路径，没给就是空串
     bool        wantsSolve() const;  // 有没有 --solve

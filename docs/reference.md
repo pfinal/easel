@@ -34,6 +34,7 @@ int main(int argc, char** argv) {
 | `theme` | `App& theme(const Theme&)` | 见 [`Theme`](#theme) |
 | `statusBar` | `App& statusBar(bool)` | 底部状态栏，默认 `false`；F12 打开调试台时临时显示 |
 | `frameRate` | `App& frameRate(double fps)` | 帧率上限，默认 60；传 `0` 关闭上限。命令行 `--fps N` 之后覆盖。窗口最小化/被遮挡时自动降到约 10 帧 |
+| `maxDelta` | `App& maxDelta(double seconds)` | `onFrame`/拖拽等算出来的 `dt` 的上限，默认 `0.05`（20fps 一帧）。窗口被挡一下再切回来，现实里过去的时间可能是好几秒，不夹住粒子/物理模拟会一帧瞬移到很远；传 `0` = 不夹 |
 | `idleThrottle` | `App& idleThrottle(bool)` | 默认 `false`。开启后：无输入且闲置 > 0.5s 时，帧间隔放大到 100ms；一有输入/子进程运行中/toast 显示中立即恢复 `frameRate()` 速度 |
 | `busyWhen` | `App& busyWhen(std::function<bool()>)` | `idleThrottle` 开启时，返回 `true` 则视为忙碌，保持满帧 |
 | `background` | `App& background(const Color&)` | 画布底色，不设就用主题的 `bg` |
@@ -275,17 +276,18 @@ Vec2    transform(const Vec2& p) const;   // p 经当前变换后的世界坐标
 |---|---|---|
 | 位置 | 所有图元的顶点；`image()` 的四个角 | — |
 | 尺寸 | `circle`/`ellipse`/`arc` 的半径、`rect` 的边长 | 线宽、字号、`dot()` 的半径 |
-| 文字 | 只有**锚点** | **字形本身**：永远轴对齐、永远是屏幕像素 |
+| 文字 | `textWorld()`：锚点**和字形**都跟 | `text()`：只有**锚点**，字形永远轴对齐、永远是屏幕像素 |
 | 鼠标 | — | `c.mouse()`、`c.toWorld()` |
 
 两个最常见的意外：
 
 - **`text()` 不会转、也不会缩。** 对画在局部原点的一行字做 `rotate()` / `scale()`，
   锚点没动，字形又不受矩阵影响，屏幕上**什么变化都没有**（代码看着完全正确）。
-  想让字变大改 `textSize()`；想让字绕圈，先 `translate` 把锚点推出去再 `rotate`，
-  让锚点自己跑圆周。
-- **`image()` 相反，它会转。** 贴图是四个角分别过矩阵的，所以 `rotate`/`scale`
-  能把图片转起来、翻过来。text 和 image 在这一点上行为相反，别套用。
+  想让字变大改 `textSize()`；想让字跟着转/缩，用 [`textWorld()`](#c-textworld)——
+  字号是世界单位，逐字符贴图，四个角都过矩阵，和 `image()` 一样会转。
+- **`image()` 会转，`text()` 不会。** 贴图是四个角分别过矩阵的，所以 `rotate`/`scale`
+  能把图片转起来、翻过来；`text()` 却只挪锚点。同一个变换栈下两种图元行为相反，
+  别套用——`textWorld()` 才是和 `image()` 同一套行为的文字版本。
 
 线宽同理：想让线条越来越细（比如递归画树的枝条），不能靠 `scale()`，
 必须每一级显式 `stroke(color, width)` 或 `strokeWidth(px)` 传新值。
@@ -318,13 +320,29 @@ void image(const Texture& t, const Rect& worldRect, const Rect& srcPx); // 只�
 enum class Align { Left, Center, Right };
 Canvas& textSize(double px);   // 状态式，屏幕像素
 void    text(const Vec2& at, const std::string& s, Align align = Align::Left);
+double  textWidth(const std::string& s) const;   // 当前 textSize() 下这段文字多宽（逻辑像素）
 ```
 
-`at` 为世界坐标，字号为屏幕像素（不随缩放变化）。
+`at` 为世界坐标，字号为屏幕像素（不随缩放变化）。`textWidth()` 不画东西，只测量——
+排版（右对齐、居中到某个位置、算一个刚好包住文字的按钮宽度）离不开它，单位和
+`textSize()` 一致，不用自己再乘 DPI。
 
 **文字不会跟着 `rotate()` / `scale()` 转或缩**——只有锚点过变换矩阵，字形本身永远
 轴对齐地画出来。要变大改 `textSize()`；要绕圈就 `translate` 把锚点推出去再 `rotate`。
 详见[变换影响谁、不影响谁](#变换影响谁)。
+
+<a id="c-textworld"></a>
+```cpp
+void   textWorld(const Vec2& at, const std::string& s, double sizeWorld, Align align = Align::Left);
+double textWidthWorld(const std::string& s, double sizeWorld) const;   // textWorld() 的配套测量，世界单位
+```
+
+`text()` 的反面：`sizeWorld` 是世界单位，字形**跟随当前变换**——`rotate()`/`scale()`
+都跟着转/缩，和 `image()` 一致。想要「转圈的名字」「贴在旋转物体上的标签」这类效果
+用它；想要「字号固定、不随缩放变大」（地图标注、UI 文字）还是用 `text()`。
+
+实现是逐字符四边形贴图（每个字一次 `AddImageQuad`），比 `text()` 贵不少——用它测量、
+排版一大段文字之前先想想[性能预算](#性能预算)，不要拿它画成千上万个标签。
 
 <a id="字体来源"></a>
 ### 中文字体查找顺序
@@ -341,29 +359,47 @@ void    text(const Vec2& at, const std::string& s, Align align = Align::Left);
 ```cpp
 class Layer {
     Layer& fill(const Color&);  Layer& stroke(const Color&, double px);   // 同 Canvas
-    // 下面这十个的签名与 Canvas 的同名函数一致。但 Layer 的图元集合**比 Canvas 少**：
+    // 下面这些的签名与 Canvas 的同名函数一致，图元集合和 Canvas 一样全：
     void line/polyline/circle/ellipse/dot/rect/triangle/polygon/text/image(...);
-    // 没有 arc / bezier / beginShape / vertex。要把曲线存进 Layer，
-    // 自己采样成一串点交给 polyline()。
+    void arc/bezier(...);
+    void beginShape();  void vertex(const Vec2&);  void endShape(bool closed = true);
+    // 没有 textWorld()：Layer 里的 text() 和 Canvas::text() 一样只有锚点跟变换，
+    // 字形不转；要「跟着转的字」现场用 c.textWorld() 画，Layer 存不住那个。
+
+    Layer& follow(const Canvas& c);   // 接下来落的笔按 c 此刻的变换矩阵变换后再存
+    Layer& noFollow();                // 切回绝对世界坐标（默认状态）
+
     void   clear();                     // 全部擦除
     size_t size() const;                // 当前记录的图元条数
     void   limit(size_t maxCommands);   // 上限，默认 20 万，超出自动丢弃最早的
+    Rect   bounds() const;              // 所有记下来的图元的世界坐标包围盒
 };
 ```
 
-记录世界坐标的绘制指令，每帧由 `Canvas::draw(layer)` 重放；用于拖尾/涂鸦/图章等
+记录绘制指令，每帧由 `Canvas::draw(layer)` 重放；用于拖尾/涂鸦/图章等
 "留下笔迹"的效果。作为 `App` 的成员变量持有，不要每帧新建。
 
     struct S { Layer ink; } S;
     void onFrame(double) { if (c.hovered()) S.ink.stroke(color, 2).line(prev, c.mouse()); }
     void onDraw(Canvas& c) { c.draw(S.ink); }
 
-两条要点：
+几条要点：
 
-- **Layer 记的是绝对世界坐标，不记变换栈。** 落笔时 Canvas 上的 `push`/`rotate`
-  对它没有影响；反过来，`c.push().rotate(a); c.draw(ink); c.pop();` 会把**整个图层**
-  一起转，不是把每一笔各转一份。想要"一笔自动复制成 N 份旋转副本"（万花筒），
-  得在落笔时就用 `Vec2::rotated()` 把 N 份的坐标都算好、都写进 Layer。
+- **默认记的是绝对世界坐标，不认 Canvas 当前的变换栈。** 落笔时 Canvas 上的
+  `push`/`rotate` 对它没有影响；反过来，`c.push().rotate(a); c.draw(ink); c.pop();`
+  会把**整个图层**一起转，不是把每一笔各转一份。
+- **想让落笔也跟着当前变换走，用 `follow(c)`。** 它只在调用那一刻拍一张 `c` 的
+  矩阵快照，之后 `c` 再变不会追着改已经记过的点：
+
+      c.push().rotate(a); ink.follow(c).line(p1, p2); c.pop();   // 落笔时就转好了
+
+  用完记得 `noFollow()` 切回默认状态，否则后面所有落笔都会一直按同一份矩阵变换。
+  「一笔自动复制成 N 份旋转副本」（万花筒）现在可以在落笔的循环里 `follow(c)`
+  配合 `c.rotate()` 直接写，不必再手算 `Vec2::rotated()`。
+  `circle`/`ellipse`/`arc` 在有旋转/非等比缩放的 `follow()` 下按统一缩放因子近似
+  （和 Canvas 自己遇到非单位阵时退化成多边形是同一个道理）；`image()` 在有旋转的
+  `follow()` 下只能退化成包围盒摆放（贴图本身不会转）——真要转的贴图用 `c.image()`
+  现场画，别指望走 `follow()` 过的 Layer。
 - **`limit()` 要按重放成本定，不是按内存定。** `Canvas::draw(layer)` 每帧把记下的
   每一条命令重走一遍，且**不做视口裁剪**。默认上限 20 万对累积类作品偏大，
   见[性能预算](#性能预算)。
@@ -382,11 +418,15 @@ App& onClick(std::function<void(Vec2, Mouse)>);   // 世界坐标 + 按键；鼠
 ```cpp
 struct Drag {
     Vec2  start, current, delta;   // 世界坐标；delta 为本帧位移（非累计总量）
+    Vec2  velocity;                // 世界单位/秒；ended 帧也有效，见下
     Mouse button = Mouse::Left;
     bool  began = false, ended = false;   // 本帧是否为拖拽的首帧/末帧
 };
 App& onDrag(std::function<void(const Drag&)>);   // 拖拽中每帧调用
 ```
+
+`velocity` 是最近几帧的平滑速度，"松手甩出去"（惯性抛出、缩放/滚动的惯性）直接读
+`ended` 帧的 `velocity` 就行，不用像 `delta` 那样自己去接上一帧的值。
 
 <a id="onkey"></a>
 ```cpp
@@ -403,8 +443,10 @@ App& onKey(std::function<void(int)>);   // 参数为 ImGuiKey；仅在键刚按�
 - **两者互斥，同一次按下松开只会触发其中一个。** 松手时：若已经进入拖拽状态，
   只发一次 `onDrag`（`ended = true`）；若从按下到松开位移小于 4 像素，只发 `onClick`。
   所以"点一下生成一个、拖一下甩出去"不会一次生出两个。
-- **`ended` 那一帧的 `delta` 是 `{0, 0}`。** 想拿拖拽速度当初速度（"甩"），
-  要用**上一帧**的 `delta`，别在 `ended` 帧才去取。
+- **`ended` 那一帧的 `delta` 是 `{0, 0}`，但 `velocity` 不是。** 想拿拖拽速度当
+  初速度（"甩出去"），直接用 `ended` 帧的 `Drag::velocity`——它记的是松手前最近
+  几帧的平滑速度，不会因为松手前恰好停顿一帧就读成 0，不用再像以前那样自己去接
+  上一帧的 `delta`。
 - `delta` 是**本帧位移**，不是从起点算起的累计量；累计量自己用 `current - start`。
 
 ---
@@ -420,6 +462,12 @@ bool section(const char* label, bool defaultOpen = true);   // 折叠分组；�
 bool slider(const char* label, double* v, double lo, double hi, const char* fmt = "%.2f");
 bool slider(const char* label, float*  v, float  lo, float  hi, const char* fmt = "%.2f");
 bool slider(const char* label, int*    v, int    lo, int    hi);
+// 和 slider 外观、参数完全一样，但只在**松手那一帧**返回 true（拖动过程中的每一帧
+// 都是 false）。参数改动会触发重算（重新跑一遍模拟/优化）时用它，别用 slider——
+// 否则拖一下、中间几十帧全部重算一遍，重的作品会卡成幻灯片。
+bool sliderCommit(const char* label, double* v, double lo, double hi, const char* fmt = "%.2f");
+bool sliderCommit(const char* label, float*  v, float  lo, float  hi, const char* fmt = "%.2f");
+bool sliderCommit(const char* label, int*    v, int    lo, int    hi);
 bool toggle(const char* label, bool* v);
 bool button(const char* label, bool wide = false);
 ```
@@ -484,6 +532,16 @@ Vec2   lerp(Vec2 a, Vec2 b, double t);   double lerp(double a, double b, double 
 double clamp(double v, double lo, double hi);
 double remap(double v, double lo, double hi, double lo2, double hi2);   // 不夹紧，超出范围结果也超出
 ```
+
+<a id="kpi"></a>
+```cpp
+inline constexpr double kPi  = 3.14159265358979323846;   // 对应 Processing 的 PI
+inline constexpr double kTau = 6.28318530717958647692;   // 对应 Processing 的 TWO_PI（2π，转一整圈）
+double radians(double deg);   // 对应 Processing 的 radians()
+double degrees(double rad);   // 对应 Processing 的 degrees()
+```
+
+MSVC 的 `<cmath>` 不带 `M_PI`（那是 POSIX 扩展）；不用再自己 `constexpr double kPi = 3.14159...`。
 
 <a id="rng"></a>
 ### `Rng`
@@ -730,14 +788,17 @@ App 内置的（构造 `App` 时自动解析）：
 | `--frames N` | 跑 N 帧自动退出（CI / 截图用） |
 | `--screenshot <png>` | 退出前存一张截图 |
 | `--fps N` | 帧率上限（`0` = 不限制），覆盖代码里 `frameRate()` |
+| `--warmup N` | 进入正常循环前先空转 N 帧（只调 `onFrame(dt)`，`dt` 固定 `1/60`，**不渲染**），再开始正常帧 |
 
 自己的参数用 `cli::args()`（见[第 14 节](#cli-args)）。Windows 上作品是 GUI 程序，
 从命令行运行时输出会接回当前终端。
 
 **`--frames N --screenshot x.png` 截出来是空画面？** `--frames 120` 只跑了大约两秒，
-凡是"要等几秒才发生一次"或"要积累一阵才好看"的效果，那时候都还没发生。写作品时就
-按"一打开就有画面"来设计：定时器的初值直接设成大于阈值（让第一次立刻触发），
-积累类效果在 `onStart` 里先空跑若干步预热。
+凡是"要等几秒才发生一次"或"要积累一阵才好看"的效果，那时候都还没发生。加一个
+`--warmup N`：`app --warmup 300 --frames 30 --screenshot x.png`，先用固定 `1/60`
+的 `dt` 空转 300 帧「只跑逻辑不渲染」，再开始正常的 30 帧和截图——同一条命令永远
+预热出同一个状态，可复现。写作品时也可以按"一打开就有画面"来设计：定时器的初值
+直接设成大于阈值（让第一次立刻触发）。
 
 ### 主程序的命令行
 
@@ -824,8 +885,8 @@ Easel 每帧重画整张画布（相机缩放和回放才能成立），所以**
 见 [`onClick` 与 `onDrag` 的关系](#click-drag-契约)。
 
 **加了 `rotate()` / `scale()`，文字纹丝不动** → 设计行为：`text()` 只有锚点过变换矩阵，
-字形永远轴对齐。要变大用 `textSize()`，要绕圈先 `translate` 把锚点推出去。
-见[变换影响谁、不影响谁](#变换影响谁)。
+字形永远轴对齐。要变大用 `textSize()`，要绕圈先 `translate` 把锚点推出去；
+要字形本身也转/缩，换 [`textWorld()`](#c-textworld)。见[变换影响谁、不影响谁](#变换影响谁)。
 
 **`arc()` 画出来是实心的一片** → 填不填充只看 fill 状态，与 `pie` 无关。
 想要一条弧线先 `noFill()`。
@@ -857,6 +918,146 @@ Easel 的东西（最常见是 `audio::Sound::load`）。全局之间的初始�
 用 `cmake --preset debug`（ASan + 标准库调试模式）重新构建。
 
 **崩溃了但调用栈看不出是哪一行** → 用 VS Code 的 F5（Debug 配置），或 `cmake --preset debug`。
+
+---
+
+## 20. 离屏画布（`Graphics`）
+
+<a id="graphics"></a>
+
+### 为什么要它——`Layer` 的上限
+
+Easel 每帧重画整张画布（相机缩放、回放才能成立）。`Layer` 靠"记下命令、每帧
+`Canvas::draw(layer)` 重放"实现"留下笔迹"，重放是**逐条**的，不做视口裁剪——
+见[性能预算](#性能预算)。流场、涂鸦、长时间的拖尾、粒子留痕这类**积累型**创作，
+命令数很容易冲到几十万条，实测 6 万条左右就开始掉帧，而这类作品往往要画到
+几十万甚至更多。
+
+`Graphics` 是一块真正的显卡位图（对应 Processing 的 `PGraphics`）：画一次，
+像素就烧在里面，下一帧不用重画，复杂度是 **O(1)/帧**，跟你已经画了多少条完全
+无关。用它取代 `Layer` 做积累型效果，`Layer` 留给"量小、还要跟着相机缩放"的
+矢量笔迹。
+
+### API
+
+```cpp
+class Graphics {
+public:
+    bool    create(int w, int h);      // 像素尺寸；失败返回 false 并 EASEL_WARN，不崩
+    void    destroy();
+    bool    valid() const;
+    int     width() const;  int height() const;
+    void    clear(const Color& c = Color(0, 0, 0, 0));   // 整块清掉
+    Canvas& begin();                   // 开始往这块缓冲画；返回它自己的 Canvas
+    Canvas& canvas();                  // begin()/end() 之间也能拿到，方便串写
+    void    end();                     // 结束——这一批画的东西这时才真正烧进纹理
+    Texture texture() const;           // 拿去 c.image(...) 贴到主画布上
+};
+```
+
+禁止拷贝（`= delete`），允许移动。析构自动 `destroy()`。
+
+```cpp
+Graphics g;
+app.onStart([&]{ g.create(1280, 800); });
+app.onFrame([&](double dt){
+    g.begin();                            // 之后的绘制都进这块缓冲
+    g.canvas().stroke(c, 2).line(a, b);
+    g.end();
+});
+app.onDraw([&](Canvas& c){ c.image(g.texture(), worldRect); });   // 整块贴到主画布
+```
+
+### 坐标系：像素，不是世界坐标
+
+`g.canvas()` 用的是**像素坐标**——左上角 `(0,0)`，右下角 `(w,h)`，1 个单位 =
+1 个像素，**不受主画布相机（缩放/平移）影响**。它有自己的一台相机，1:1、不缩放，
+和主画布的 `Camera` 是两回事。这样"往缓冲里画"的含义是固定的：你写的每一个坐标
+就是缓冲里的那个像素，不会因为主画布这一帧缩放了多少而变。
+
+想把世界坐标的东西画进缓冲（比如让流场跟着主画布一起缩放平移），自己用主画布的
+相机换算一遍，再喂给 `g.canvas()`：
+
+```cpp
+// 世界坐标 -> 主画布屏幕像素 -> 减去画布左上角 -> 缓冲像素
+Vec2 toBufferPx(Canvas& mainCanvas, const Vec2& world) {
+    return mainCanvas.toScreen(world) - mainCanvas.screen().min();
+}
+```
+
+### 时机：`begin()`/`end()` 能在哪调
+
+- 只能在 `onStart` / `onFrame` 里调——那时主画布还没在录制。
+- **不能**在 `onDraw` 里调：那时主画布正在录制，`begin()` 会触发 `EASEL_CHECK`
+  报错（红色横幅，不崩）。
+- `begin()` 之后必须配对 `end()`；没 `end()` 就再 `begin()` 也会触发 `EASEL_CHECK`。
+- `create()` 之前 `valid()` 是假的；`begin()`/`end()`/`clear()` 在没建成功时
+  静默什么都不做，不崩——和 `loadTexture` 失败返回空 `Texture` 是一路的设计。
+
+### 和 `Layer` 的分工
+
+| | `Layer` | `Graphics` |
+|---|---|---|
+| 记的是 | 矢量命令（世界坐标） | 像素（GPU 位图） |
+| 重放/积累代价 | 每帧逐条重放，随条数线性增长 | O(1)/帧，跟画了多少条无关 |
+| 跟着主画布缩放/平移 | 会（`toScreen` 每帧重算） | 不会（贴图放大会糊） |
+| 适合的量级 | 几千条，还要交互 | 几十万次绘制也不掉帧 |
+| 典型场景 | 少量还能撤销/编辑的笔迹 | 流场、涂鸦、长拖尾、粒子留痕 |
+
+两者不互斥：一个作品里可以都用——`Layer` 画少量还能交互的笔迹，`Graphics`
+画背景的大量积累效果，`onDraw` 里先 `c.image(g.texture(), ...)` 再 `c.draw(layer)`
+叠上去。
+
+### 完整示例：流场
+
+```cpp
+struct State {
+    Graphics           flow;
+    std::vector<Vec2>  pts;
+} S;
+
+app.onStart([&]{
+    S.flow.create(1000, 700);
+    for (int i = 0; i < 4000; ++i) S.pts.push_back({rng().d(0, 1000), rng().d(0, 700)});
+});
+
+app.onFrame([&](double dt){
+    Canvas& c = S.flow.begin();
+    for (Vec2& p : S.pts) {
+        double a = noise(p.x * 0.004, p.y * 0.004, S.t * 0.06) * 2 * kTau;
+        Vec2   np = p + Vec2{std::cos(a), std::sin(a)} * 2.2;
+        c.stroke(Color::hsv(a * 57.3, 0.6, 0.85, 0.5), 1.2).line(p, np);
+        p = np;
+    }
+    S.flow.end();
+});
+
+app.onDraw([&](Canvas& c){
+    c.camera().fit(Rect(0, 0, 1000, 700));
+    c.image(S.flow.texture(), Rect(0, 0, 1000, 700));
+});
+```
+
+完整可跑的版本见 `examples/creative/main.cpp` 的「流场」小节（`--part 4`）。
+
+### 后端支持
+
+- **OpenGL**：完整支持，真正的 FBO + 颜色贴图。
+- **DX11**：`create()` 直接返回 `false` 并 `EASEL_WARN`——这是已知缺口（D3D11
+  版需要一块 `ID3D11Texture2D` 渲染目标 + `ID3D11RenderTargetView`，工作量和
+  GL 差不多，但目前没有 DX11 的实测环境，不实测不敢接）。DX11 后端下想要"积累"
+  效果，退回用 `Layer`（重放开销更大，但至少画得对）。
+
+### 常见错误
+
+**`begin()`/`end()` 之间画的东西贴出来是空的** → 先检查 `g.valid()`：`create()`
+是不是失败了（看有没有 `EASEL_WARN`）。DX11 后端下 `create()` 目前必定失败，见上。
+
+**贴到主画布上是糊的** → `Graphics` 的像素尺寸是创建时定死的，放大贴出来和放大
+任何一张贴图一样会糊；需要更清晰就 `create()` 一块更大的缓冲。
+
+**在 `onDraw` 里调 `g.begin()` 报 `EASEL_CHECK` 红色横幅** → 设计行为，见
+[离屏画布](#graphics) 一节的"时机"：`begin()`/`end()` 只能在 `onStart`/`onFrame` 里配对调用。
 
 ---
 

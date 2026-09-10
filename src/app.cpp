@@ -127,6 +127,9 @@ struct App::Impl {
     bool   showImGuiDemo = false;
     bool   running = true;
     double lastTime = 0;
+    // dt 的上限（秒）：窗口被挡一下、切到后台再切回来，现实里过去的时间可能是好几秒，
+    // 不夹住的话粒子/物理模拟会一帧瞬移到很远的地方。0 = 不夹。
+    double maxDeltaSeconds = 0.05;   // 默认 20fps 的一帧
 
     // 帧率上限 / 省电（D-3x：垂直同步在虚拟机上常常失效，空转烧一个 CPU 核）
     double targetFps = 60.0;    // 0 = 不限制
@@ -148,6 +151,10 @@ struct App::Impl {
     Vec2  pressScreen;
     bool  pressed = false;
     Mouse pressBtn = Mouse::Left;
+    // Drag::velocity 的平滑：存最近 3 帧的瞬时速度（delta/dt），取平均——避免松手前
+    // 恰好停顿一帧导致算出来的速度是 0，「甩出去」的手感会很奇怪。
+    Vec2  dragVelHist[3];
+    int   dragVelN = 0;
 
     Rect canvasRect{0, 0, 1, 1};
     bool themeDirty = false;
@@ -201,6 +208,7 @@ App& App::frameRate(double fps) {
     p_->frameInterval = fps > 0.0 ? 1.0 / fps : 0.0;
     return *this;
 }
+App& App::maxDelta(double seconds) { p_->maxDeltaSeconds = seconds; return *this; }
 App& App::idleThrottle(bool on) { p_->idleThrottleOn = on; return *this; }
 App& App::busyWhen(std::function<bool()> fn) { p_->busyFn = fn; return *this; }
 App& App::editorWidth(float px) { p_->editorW = px; return *this; }
@@ -684,6 +692,17 @@ int App::run() {
     EASEL_LOG("Easel %s 启动（%s，DPI %.2f，字体 %s）", EASEL_VERSION, internal::backend::name(),
               (double)d.dpi, internal::fontInfo().path.empty() ? "内置" : internal::fontInfo().path.c_str());
 
+    // --warmup N：截图/录屏经常错过"要等几秒才发生"的效果。真正进入下面那个主循环之前，
+    // 先只调 N 次 onFrame(dt)——不渲染、不 present、不摸窗口系统——dt 固定用 1/60，
+    // 不跟真实时钟走，同一条命令永远预热出同一个状态，配合 --frames/--screenshot 才稳。
+    long long warmup = cli::args().has("warmup") ? cli::args().num("warmup", 0) : 0;
+    if (warmup > 0) {
+        EASEL_LOG("--warmup %lld：只跑逻辑不渲染，预热 %lld 帧（dt 固定 1/60）", warmup, warmup);
+        for (long long i = 0; i < warmup; ++i) {
+            if (d.onFrame) d.onFrame(1.0 / 60.0);
+        }
+    }
+
     d.lastTime = glfwGetTime();
     d.lastActiveTime = d.lastTime;
     d.clear = d.customBg ? d.bg : d.theme.bg;
@@ -732,7 +751,10 @@ void App::frame() {
     if (d.runOnce && d.framesRun >= 2) { d.runOnce = false; internal::editorRun(); }
 
     double now = glfwGetTime();
-    double dt = clamp(now - d.lastTime, 0.0, 0.25);
+    // dt 上限默认 0.05s（20fps 一帧）：窗口被挡一下再回来，现实里过去的时间可能是
+    // 好几秒，不夹住的话粒子/物理模拟会一帧瞬移到很远的地方。maxDelta(0) = 不夹。
+    double rawDt = now - d.lastTime;
+    double dt = d.maxDeltaSeconds > 0.0 ? clamp(rawDt, 0.0, d.maxDeltaSeconds) : std::max(rawDt, 0.0);
     d.lastTime = now;
     shared().frame++;
     shared().time = now;
@@ -812,7 +834,9 @@ void App::frame() {
     bg->AddRectFilled(iv(d.canvasRect.min()), iv(d.canvasRect.max()), col(d.clear));
     bg->PushClipRect(iv(d.canvasRect.min()), iv(d.canvasRect.max()), true);
     d.canvas.begin(d.cam, bg, canvasHovered, d.dpi);
+    sh.canvasRecording = true;   // Graphics::begin() 靠这个拒绝"在 onDraw 里离屏画布 begin()"
     if (d.onDraw) d.onDraw(d.canvas);
+    sh.canvasRecording = false;
     drawScaleBar(d.canvas, d.cam, d.theme, d.dpi);
     d.canvas.end();
     bg->PopClipRect();
@@ -834,6 +858,7 @@ void App::frame() {
             d.drag.start = worldNow();
             d.drag.current = d.drag.start;
             d.drag.button = btn;
+            d.dragVelN = 0;
         }
         if (d.pressed && d.pressBtn == btn && ImGui::IsMouseDragging(imb, 3.0f)) {
             Vec2 w = worldNow();
@@ -842,6 +867,17 @@ void App::frame() {
             d.drag.began = !d.dragging;
             d.drag.ended = false;
             d.dragging = true;
+            // velocity：这一帧的瞬时速度 delta/dt，进最近 3 帧的历史再取平均——
+            // 松手前恰好有一帧停顿（dt 很小或 delta 是 0）不会把「甩出去」的速度拖没。
+            // dt<=0（极少见，比如同一时钟刻两次 PollEvents）就用上一次算出来的瞬时值。
+            Vec2 instVel = dt > 1e-9 ? d.drag.delta * (1.0 / dt)
+                                     : (d.dragVelN > 0 ? d.dragVelHist[(d.dragVelN - 1) % 3] : Vec2{});
+            d.dragVelHist[d.dragVelN % 3] = instVel;
+            ++d.dragVelN;
+            int  histN = d.dragVelN < 3 ? d.dragVelN : 3;
+            Vec2 avg;
+            for (int k = 0; k < histN; ++k) avg += d.dragVelHist[k];
+            d.drag.velocity = avg / (double)histN;
             if (d.onDrag) d.onDrag(d.drag);
             d.drag.began = false;
         }
@@ -850,6 +886,8 @@ void App::frame() {
                 d.drag.delta = {0, 0};
                 d.drag.current = worldNow();
                 d.drag.ended = true;
+                // 注意：velocity 不在这里重算——它保留的是上面那个分支里松手前最后
+                // 一次算出来的平滑值，"甩出去"要用的就是这个。
                 if (d.onDrag) d.onDrag(d.drag);
             } else if (dist(d.pressScreen, internal::ev(io.MousePos)) < 4.0 * d.dpi) {
                 if (d.onClick) d.onClick(worldNow(), btn);

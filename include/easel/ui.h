@@ -19,6 +19,14 @@ bool slider(const char* label, double* v, double lo, double hi, const char* fmt 
 bool slider(const char* label, float* v, float lo, float hi, const char* fmt = "%.2f");
 bool slider(const char* label, int* v, int lo, int hi);
 
+// 和 slider 一模一样，但只在**松手那一帧**返回 true（其余每一帧、包括拖动中，都返回
+// false）。参数改动会触发重算（重新跑一遍模拟/优化）时用它——slider 每帧都 true，
+// 拖一下中间的几十帧全部重算一遍，重的作品会卡成幻灯片；sliderCommit 只在松手那一刻
+// 触发一次。想要「拖的时候就能实时看到」还是用 slider。
+bool sliderCommit(const char* label, double* v, double lo, double hi, const char* fmt = "%.2f");
+bool sliderCommit(const char* label, float* v, float lo, float hi, const char* fmt = "%.2f");
+bool sliderCommit(const char* label, int* v, int lo, int hi);
+
 bool toggle(const char* label, bool* v);
 bool button(const char* label, bool wide = false);
 

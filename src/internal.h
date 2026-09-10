@@ -40,6 +40,22 @@ bool        createTexture(const unsigned char* rgba, int w, int h, std::uint64_t
                           bool pixelated = false);
 void        destroyTexture(std::uint64_t id);
 bool        readPixels(int* w, int* h, std::vector<unsigned char>* rgba);
+
+// ---------------------------------------------------------------- 离屏渲染目标（Graphics）
+// GL：真正的 FBO + 颜色贴图。DX11：全部空实现 / 返回 false —— 已知缺口（见 backend.cpp
+// DX11 分支的注释），学生在 DX11 后端下改用 Layer。
+// createRenderTarget 失败时不用自己 EASEL_WARN——调用方（Graphics::create）统一报。
+bool createRenderTarget(int w, int h, std::uint64_t* outTexId, std::uint64_t* outFboId);
+void destroyRenderTarget(std::uint64_t texId, std::uint64_t fboId);
+// 绑 FBO、把 viewport 设成整块缓冲、把当前 FBO/viewport 存起来（endRenderTarget 还原用）。
+bool beginRenderTarget(std::uint64_t fboId, int w, int h);
+void endRenderTarget();
+void clearRenderTarget(const Color& c);
+// 把一个 ImDrawList 画进当前绑定的渲染目标（beginRenderTarget 已经绑好）。
+// dl 的静态类型是 ImDrawList*，写成 void* 是为了不让 internal.h 之外、只 #include
+// <easel/canvas.h> 的代码也被迫看见 imgui.h（internal.h 本身已经 include 了 imgui.h，
+// 这里其实可以直接写 ImDrawList*，但保持和 Canvas::begin(void* drawList) 同样的风格）。
+bool renderDrawList(void* dl, int w, int h);
 }  // namespace backend
 
 // ---------------------------------------------------------------- 字体
@@ -116,6 +132,10 @@ struct Shared {
     Camera*                camera = nullptr;
     TimelineBase*          timeline = nullptr;
     float                  dpi = 1.f;
+    // 主画布正在录制（app.cpp 的 frame() 在 d.canvas.begin()/end() 之间置真）。
+    // Graphics::begin() 用它判断"是不是在 onDraw 里被调用"——那时候主画布正忙，
+    // Graphics 自己的 begin/end 不该在这时候插进来。
+    bool                   canvasRecording = false;
 
     void addLog(LogLevel lv, const char* file, int line, const std::string& msg);
     void addTrace(const char* name, double value, long long index);

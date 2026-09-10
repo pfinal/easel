@@ -11,7 +11,8 @@
 
 using namespace easel;
 
-static const double kPi = 3.14159265358979323846;
+// kPi 现在是 core.h 里的 easel::kPi（`using namespace easel` 已经带进来了），
+// 这里不用再定义一份同名的——定义了反而会和它撞名产生二义性。
 
 TEST_CASE("变换栈：默认是单位阵") {
     Canvas c;
@@ -185,4 +186,72 @@ TEST_CASE("Layer：折线/多边形各类图元都能落笔，条数照记") {
     CHECK(ink.size() == 1);
     ink.polygon(pts);
     CHECK(ink.size() == 2);
+}
+
+TEST_CASE("Layer：现在也补齐了 arc/bezier/beginShape+vertex+endShape，条数照记") {
+    Layer ink;
+    ink.arc({0, 0}, 5, 0, kPi / 2);
+    CHECK(ink.size() == 1);
+    ink.bezier({0, 0}, {1, 1}, {2, 1}, {3, 0});
+    CHECK(ink.size() == 2);
+    ink.beginShape();
+    ink.vertex({0, 0});
+    ink.vertex({1, 0});
+    ink.vertex({1, 1});
+    ink.endShape(true);
+    CHECK(ink.size() == 3);
+    // 没调 beginShape() 就 vertex()/endShape()：什么都不该发生（不是配对调用）
+    ink.vertex({9, 9});
+    ink.endShape();
+    CHECK(ink.size() == 3);
+}
+
+TEST_CASE("Layer::bounds()：没记东西是空的，记完之后包住所有点") {
+    Layer ink;
+    CHECK(ink.bounds().empty());
+    ink.line({0, 0}, {10, 4});
+    ink.dot({-3, 2});
+    Rect b = ink.bounds();
+    CHECK(b.left() == doctest::Approx(-3));
+    CHECK(b.right() == doctest::Approx(10));
+    CHECK(b.top() == doctest::Approx(0));
+    CHECK(b.bottom() == doctest::Approx(4));
+}
+
+TEST_CASE("Layer::follow()：按 c 当前的变换记录图元；noFollow() 切回绝对坐标") {
+    Canvas c;
+    Layer  ink;
+
+    // c.push().rotate(pi/2); ink.follow(c).line(...); c.pop(); —— 文档里给的用法
+    c.push().rotate(kPi / 2);
+    ink.follow(c).line({0, 0}, {10, 0});
+    c.pop();
+    // rotate(pi/2)：(10,0) 转到 (~0,10)（和「变换栈：旋转」那组测试同一个矩阵数学）
+    Rect b1 = ink.bounds();
+    CHECK(b1.max().x == doctest::Approx(0).epsilon(1e-9));
+    CHECK(b1.max().y == doctest::Approx(10));
+
+    // follow() 只在调用那一刻拍快照：c 变换栈已经 pop 回单位阵了，不会追着改
+    CHECK(c.transform({10, 0}).x == doctest::Approx(10));
+
+    // noFollow() 切回默认行为——落的点就是绝对坐标
+    ink.clear();
+    ink.noFollow();
+    ink.line({0, 0}, {10, 0});
+    Rect b2 = ink.bounds();
+    CHECK(b2.max().x == doctest::Approx(10));
+    CHECK(b2.max().y == doctest::Approx(0).epsilon(1e-9));
+}
+
+TEST_CASE("Layer::follow()：圆心跟着挪，半径按统一缩放因子一起缩") {
+    Canvas c;
+    Layer  ink;
+    c.push().translate({100, 0}).scale(2);
+    ink.follow(c).circle({0, 0}, 3);
+    c.pop();
+    Rect b = ink.bounds();
+    // 圆心 (0,0) 先缩放（还是 (0,0)）再平移到 (100,0)；半径 3 * 2 = 6
+    CHECK(b.center().x == doctest::Approx(100));
+    CHECK(b.center().y == doctest::Approx(0).epsilon(1e-9));
+    CHECK((b.right() - b.left()) == doctest::Approx(12));   // 直径 = 2 * 6
 }

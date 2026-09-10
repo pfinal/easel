@@ -25665,6 +25665,14 @@ using json = nlohmann::json;
 //  1. 几何：Vec2 / Rect / Color
 // ============================================================================
 
+// π 和 2π。MSVC 的 <cmath> 不给 M_PI（那是 POSIX 扩展），逼得每个作品自己写一遍
+// `constexpr double kPi = 3.14159...`——现在库里带了，作品直接用 easel::kPi。
+// 对应 Processing 的 PI / TWO_PI；radians()/degrees() 对应 Processing 同名函数。
+inline constexpr double kPi  = 3.14159265358979323846;
+inline constexpr double kTau = 6.28318530717958647692;   // 2π，转一整圈
+inline double radians(double deg) { return deg * (kPi / 180.0); }
+inline double degrees(double rad) { return rad * (180.0 / kPi); }
+
 struct Vec2 {
     double x = 0, y = 0;
 
@@ -26313,7 +26321,10 @@ inline bool saveJson(const std::string& path, const json& j, int indent = 2) {
 // ============================================================================
 //  7. 命令行参数
 //     --seed N   --case <file>   --iters N   --open <file>   --solve
-//     --dump-frame N   --doctor   --quiet   --fps N
+//     --dump-frame N   --doctor   --quiet   --fps N   --warmup N
+//  --warmup N：截图/录屏经常错过「要等几秒才发生」的效果。App 会在真正进入主循环之前，
+//  先只调 N 次 onFrame(dt)（dt 固定 1/60，不渲染、不受真实时钟影响，结果可复现），
+//  预热完再开始正常帧——配合 --frames/--screenshot 就能稳定截到「热身之后」的画面。
 // ============================================================================
 namespace cli {
 

@@ -12,7 +12,8 @@ using namespace easel;
 using namespace easel::internal;
 
 namespace {
-constexpr double kPi = 3.14159265358979323846;
+// kPi 现在是 core.h 里的 easel::kPi（`using namespace easel` 已经带进来了），
+// 这里不用再定义一份同名的——定义了反而会和它撞名产生二义性。
 
 // 一段正弦波，幅度 1.0（满幅）
 std::vector<float> sine(int n, double freq, double sampleRate, float amp = 1.f) {

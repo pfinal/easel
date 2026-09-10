@@ -28,6 +28,38 @@
 #  ifndef GL_CLAMP_TO_EDGE
 #    define GL_CLAMP_TO_EDGE 0x812F
 #  endif
+// ---- 离屏渲染目标（Graphics）要用到的 FBO 常量 ----
+// GL_RGBA8 是 GL 1.1 就有的内部格式 token，Windows 的 <GL/gl.h> 也认得；
+// 下面这四个是 GL_ARB_framebuffer_object（GL 3.0 起并入核心）的东西，
+// macOS 的 <OpenGL/gl3.h> 已经声明了，Windows/Linux 的旧 <GL/gl.h> 没有。
+#  ifndef GL_FRAMEBUFFER
+#    define GL_FRAMEBUFFER 0x8D40
+#  endif
+#  ifndef GL_COLOR_ATTACHMENT0
+#    define GL_COLOR_ATTACHMENT0 0x8CE0
+#  endif
+#  ifndef GL_FRAMEBUFFER_COMPLETE
+#    define GL_FRAMEBUFFER_COMPLETE 0x8CD5
+#  endif
+#  ifndef GL_FRAMEBUFFER_BINDING
+#    define GL_FRAMEBUFFER_BINDING 0x8CA6
+#  endif
+#  if defined(__APPLE__)
+// macOS 的核心头文件已经声明了真正的函数原型，直接用。
+#  else
+// Windows 的 <GL/gl.h> 停在 1.1，FBO 系列函数得像 GLEW/GLAD 那样自己用
+// glfwGetProcAddress 拿函数指针——只差这五个，不值得为此引入一整个 loader 依赖。
+#    if defined(_WIN32)
+#      define EASEL_GLAPI __stdcall
+#    else
+#      define EASEL_GLAPI
+#    endif
+typedef void   (EASEL_GLAPI *EaselPFNGenFramebuffers)(GLsizei, GLuint*);
+typedef void   (EASEL_GLAPI *EaselPFNBindFramebuffer)(GLenum, GLuint);
+typedef void   (EASEL_GLAPI *EaselPFNFramebufferTexture2D)(GLenum, GLenum, GLenum, GLuint, GLint);
+typedef GLenum (EASEL_GLAPI *EaselPFNCheckFramebufferStatus)(GLenum);
+typedef void   (EASEL_GLAPI *EaselPFNDeleteFramebuffers)(GLsizei, const GLuint*);
+#  endif
 #endif
 
 namespace easel {
@@ -38,6 +70,45 @@ namespace {
 GLFWwindow* g_window = nullptr;
 std::string g_gpu = "未知";
 bool        g_ready = false;
+
+#if !defined(EASEL_BACKEND_DX11)
+// beginRenderTarget/endRenderTarget 存/还原的现场——只支持单层，Graphics 不会嵌套用它。
+GLint g_rtSavedFbo = 0;
+GLint g_rtSavedViewport[4] = {0, 0, 0, 0};
+#endif
+
+#if !defined(EASEL_BACKEND_DX11) && !defined(__APPLE__)
+// Windows / Linux 的 FBO 函数指针，第一次用到时用 glfwGetProcAddress 加载一次。
+EaselPFNGenFramebuffers        glGenFramebuffers_ = nullptr;
+EaselPFNBindFramebuffer        glBindFramebuffer_ = nullptr;
+EaselPFNFramebufferTexture2D   glFramebufferTexture2D_ = nullptr;
+EaselPFNCheckFramebufferStatus glCheckFramebufferStatus_ = nullptr;
+EaselPFNDeleteFramebuffers     glDeleteFramebuffers_ = nullptr;
+bool                           g_fboFnsTried = false;
+bool                           g_fboFnsOk = false;
+
+bool loadFboFunctions() {
+    if (g_fboFnsTried) return g_fboFnsOk;
+    g_fboFnsTried = true;
+    glGenFramebuffers_ = (EaselPFNGenFramebuffers)glfwGetProcAddress("glGenFramebuffers");
+    glBindFramebuffer_ = (EaselPFNBindFramebuffer)glfwGetProcAddress("glBindFramebuffer");
+    glFramebufferTexture2D_ = (EaselPFNFramebufferTexture2D)glfwGetProcAddress("glFramebufferTexture2D");
+    glCheckFramebufferStatus_ = (EaselPFNCheckFramebufferStatus)glfwGetProcAddress("glCheckFramebufferStatus");
+    glDeleteFramebuffers_ = (EaselPFNDeleteFramebuffers)glfwGetProcAddress("glDeleteFramebuffers");
+    g_fboFnsOk = glGenFramebuffers_ && glBindFramebuffer_ && glFramebufferTexture2D_ &&
+                 glCheckFramebufferStatus_ && glDeleteFramebuffers_;
+    return g_fboFnsOk;
+}
+#elif !defined(EASEL_BACKEND_DX11)
+// macOS：<OpenGL/gl3.h> 已经声明了真正的函数，直接把名字接到真实符号上，
+// 调用点（下面 createRenderTarget 等）就不用再分平台写两套。
+inline bool loadFboFunctions() { return true; }
+#  define glGenFramebuffers_ glGenFramebuffers
+#  define glBindFramebuffer_ glBindFramebuffer
+#  define glFramebufferTexture2D_ glFramebufferTexture2D
+#  define glCheckFramebufferStatus_ glCheckFramebufferStatus
+#  define glDeleteFramebuffers_ glDeleteFramebuffers
+#endif
 
 void glfwErrorCallback(int code, const char* desc) {
     EASEL_ERROR("GLFW 错误 %d: %s", code, desc ? desc : "?");
@@ -199,6 +270,22 @@ bool readPixels(int*, int*, std::vector<unsigned char>*) {
     return false;
 }
 
+// ---------------------------------------------------------------- 离屏渲染目标（已知缺口）
+// D3D11 版的 Graphics 需要一块 ID3D11Texture2D（D3D11_BIND_RENDER_TARGET）+
+// ID3D11RenderTargetView，再把 ImGui_ImplDX11_RenderDrawData 指过去画——工作量和
+// GL 分支差不多，但这次改动没有 DX11 的实测环境（D-04：DX11 要等 9/21 检查点才验），
+// 不实测就把这段接上风险太大，所以先老实返回 false。学生在 DX11 后端下想要「积累」
+// 效果，改用 Layer（重放开销更大，但至少画得对）。
+bool createRenderTarget(int, int, std::uint64_t*, std::uint64_t*) {
+    EASEL_WARN("DX11 后端暂不支持离屏画布（Graphics），改用 Layer。");
+    return false;
+}
+void destroyRenderTarget(std::uint64_t, std::uint64_t) {}
+bool beginRenderTarget(std::uint64_t, int, int) { return false; }
+void endRenderTarget() {}
+void clearRenderTarget(const Color&) {}
+bool renderDrawList(void*, int, int) { return false; }
+
 #else
 // ---------------------------------------------------------------- OpenGL 3
 bool init(const char* title, int w, int h, bool visible, GLFWwindow** outWindow) {
@@ -322,6 +409,106 @@ bool readPixels(int* w, int* h, std::vector<unsigned char>* rgba) {
         std::memcpy(b, row.data(), row.size());
     }
     *w = fw; *h = fh;
+    return true;
+}
+
+// ---------------------------------------------------------------- 离屏渲染目标（Graphics）
+bool createRenderTarget(int w, int h, std::uint64_t* outTexId, std::uint64_t* outFboId) {
+    if (!g_ready) {
+        EASEL_ERROR("显卡还没准备好，离屏画布建不了。把 Graphics::create(...) 放进 "
+                    "app.onStart([]{ ... }) 或 onFrame 里。");
+        return false;
+    }
+    if (w <= 0 || h <= 0) return false;
+    if (!loadFboFunctions()) {
+        EASEL_ERROR("这块显卡/驱动拿不到 FBO 函数（glGenFramebuffers），离屏画布建不了。");
+        return false;
+    }
+
+    GLint prevTex = 0, prevFbo = 0;
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTex);
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
+
+    // 颜色贴图：RGBA8，线性过滤——图片放大贴到主画布上时不会一格一格发糊。
+    GLuint tex = 0;
+    glGenTextures(1, &tex);
+    if (!tex) return false;
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glBindTexture(GL_TEXTURE_2D, (GLuint)prevTex);
+
+    GLuint fbo = 0;
+    glGenFramebuffers_(1, &fbo);
+    if (!fbo) { glDeleteTextures(1, &tex); return false; }
+    glBindFramebuffer_(GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D_(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+    GLenum status = glCheckFramebufferStatus_(GL_FRAMEBUFFER);
+    glBindFramebuffer_(GL_FRAMEBUFFER, (GLuint)prevFbo);
+    if (status != GL_FRAMEBUFFER_COMPLETE) {
+        EASEL_ERROR("FBO 建不完整（状态 0x%04X），离屏画布建不了。", (unsigned)status);
+        glDeleteFramebuffers_(1, &fbo);
+        glDeleteTextures(1, &tex);
+        return false;
+    }
+    *outTexId = (std::uint64_t)tex;
+    *outFboId = (std::uint64_t)fbo;
+    return true;
+}
+
+void destroyRenderTarget(std::uint64_t texId, std::uint64_t fboId) {
+    if (fboId && loadFboFunctions()) {
+        GLuint f = (GLuint)fboId;
+        glDeleteFramebuffers_(1, &f);
+    }
+    if (texId) {
+        GLuint t = (GLuint)texId;
+        glDeleteTextures(1, &t);
+    }
+}
+
+// 绑 FBO、把 viewport 设成整块缓冲的大小，把当前 FBO/viewport 记下来给 endRenderTarget() 还原。
+// 只支持单层（不嵌套）——Graphics::begin()/end() 之间不会再嵌一层别的渲染目标。
+bool beginRenderTarget(std::uint64_t fboId, int w, int h) {
+    if (!g_ready || !fboId) return false;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &g_rtSavedFbo);
+    glGetIntegerv(GL_VIEWPORT, g_rtSavedViewport);
+    glBindFramebuffer_(GL_FRAMEBUFFER, (GLuint)fboId);
+    glViewport(0, 0, w, h);
+    return true;
+}
+
+void endRenderTarget() {
+    glBindFramebuffer_(GL_FRAMEBUFFER, (GLuint)g_rtSavedFbo);
+    glViewport(g_rtSavedViewport[0], g_rtSavedViewport[1], g_rtSavedViewport[2], g_rtSavedViewport[3]);
+}
+
+void clearRenderTarget(const Color& c) {
+    glClearColor(c.r, c.g, c.b, c.a);
+    glClear(GL_COLOR_BUFFER_BIT);
+}
+
+// 把一个（游离于 ImGui 正常帧之外的）ImDrawList 画进当前绑定的渲染目标——
+// beginRenderTarget() 已经绑好 FBO、设好 viewport，这里只管拼一份只含这一个 list 的
+// ImDrawData 交给 ImGui 自己的 OpenGL3 渲染后端。ImGui_ImplOpenGL3_RenderDrawData 会
+// 备份/还原几乎所有 GL 状态（program/texture/blend/viewport/scissor/vao/vbo……），
+// 但**不**碰 FBO 绑定——所以它画完之后颜色仍然落在我们绑的这块 FBO 上，
+// beginRenderTarget/endRenderTarget 只需要管 FBO 和 viewport 这两件事。
+bool renderDrawList(void* dl, int w, int h) {
+    if (!g_ready || !dl) return false;
+    ImDrawList* list = (ImDrawList*)dl;
+    ImDrawData  dd;
+    dd.DisplayPos = ImVec2(0.f, 0.f);
+    dd.DisplaySize = ImVec2((float)w, (float)h);
+    dd.FramebufferScale = ImVec2(1.f, 1.f);
+    dd.AddDrawList(list);                                    // 处理 _PopUnusedDrawCmd + 顶点计数
+    dd.Valid = true;
+    dd.Textures = &ImGui::GetPlatformIO().Textures;           // 字体贴图第一次用到时在这里也能被建出来
+    ImGui_ImplOpenGL3_RenderDrawData(&dd);
     return true;
 }
 #endif

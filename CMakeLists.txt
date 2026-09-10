@@ -285,6 +285,7 @@ add_library(easel STATIC
   src/app.cpp
   src/camera.cpp
   src/canvas.cpp
+  src/graphics.cpp
   src/ui.cpp
   src/theme.cpp
   src/file.cpp
@@ -554,7 +555,7 @@ endif()
 if(EASEL_BUILD_TESTS)
   enable_testing()
   add_executable(easel_tests tests/test_core.cpp tests/test_editor.cpp tests/test_canvas.cpp
-                             tests/test_audio.cpp)
+                             tests/test_graphics.cpp tests/test_audio.cpp)
   target_link_libraries(easel_tests PRIVATE easel doctest::doctest)
   if(MSVC)
     target_compile_options(easel_tests PRIVATE /utf-8)

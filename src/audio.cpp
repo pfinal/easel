@@ -44,7 +44,9 @@ namespace easel {
 
 namespace {
 
-constexpr double kPi = 3.14159265358979323846;
+// π 现在是 core.h 里 easel::kPi 公开常量，这里不用再自己定义一份（定义了反而会跟
+// easel::kPi 撞名、产生二义性——它是通过匿名命名空间隐含的 using-directive 注入到
+// easel 这一层的，和直接写在 easel:: 下的 kPi 处在同一个查找层级）。
 
 // ============================================================================
 //  环形缓冲区 —— 音频线程写，主线程读
@@ -97,12 +99,23 @@ void ringClear() {
 //  设备与引擎 —— 懒初始化，失败就一直静默
 // ============================================================================
 
+// Engine 这个单例对象本身是否还活着（不是"设备开着没开着"，是"这个 C++ 对象本身还
+// 在不在"）。正常运行期间恒为 true；只有在程序真正退出、下面那个函数级 static 被销毁
+// 之后才变 false。全局的 audio::Sound（析构要等 main 之后的静态析构阶段才轮到，见
+// audioState() 的注释）、以及再往下那个兜底的 Closer，都可能在这之后还想碰 Engine——
+// 用这个标志挡住，别 use-after-destroy。普通 bool，没有自己的析构函数，天然活到最后。
+bool g_engineAlive = false;
+
 // 学生 load 出来的 Sound 的实体。放在这里是为了让 stop()「全停」能够到它们。
 struct SoundNode {
     ma_sound snd;
     bool     ok = false;
     ~SoundNode() {
-        if (ok) ma_sound_uninit(&snd);
+        // g_engineAlive 兜底：正常情况下 closeEngine() 早就把 ok 置回 false 了（无论
+        // 是 App::~App 显式调用，还是这次真的没人管——Engine 自己销毁前也没机会通知
+        // 我们），这里多一层是防"Engine 已经死了但 ok 还没来得及被清"这种极端时序，
+        // 避免对着一个已经不存在的 ma_engine 调 ma_sound_uninit。
+        if (ok && g_engineAlive) ma_sound_uninit(&snd);
     }
 };
 
@@ -117,18 +130,34 @@ struct Engine {
 
     std::vector<ma_sound*>              oneshots;   // play() / loop() 起的
     std::vector<std::weak_ptr<SoundNode>> sounds;   // 学生手里的 Sound
+
+    Engine() { g_engineAlive = true; }
+    ~Engine() { g_engineAlive = false; }
 };
-Engine g_audio;
+
+// 单例，函数内 static（Meyers 单例，写法照抄 core.h 里的 rng()）。以前 g_audio 是
+// 命名空间级的全局对象，含 std::string/std::vector——学生写
+// `struct State { audio::Sound s = audio::load(...); } S;` 这种全局，S 在别的翻译
+// 单元里，跟这个翻译单元里的 g_audio 谁先构造是未定义行为：赌输了就是 S 的构造函数
+// 里摸到一个还没构造出来的 g_audio，崩在 main 之前，还没有调用栈——最难查的一类崩溃。
+// 改成函数内 static 后，Engine 只会在第一次真的被用到（第一次调 ensure()/audioState()）
+// 时才构造，不管这次调用是从哪个翻译单元、哪个全局的构造函数里发起的，都不会有「哪个
+// 全局先构造」的问题。
+Engine& audioState() {
+    static Engine s;
+    return s;
+}
 
 // 音频线程：ma_engine 每混完一段就叫我们一次（ma_engine_config::onProcess）
 void onProcess(void* user, float* frames, ma_uint64 count) {
     (void)user;
-    ringWrite(frames, count, g_audio.channels);
+    ringWrite(frames, count, audioState().channels);
 }
 
 void closeEngine();
 
 bool ensure() {
+    Engine& g_audio = audioState();
     if (g_audio.tried) return g_audio.ok;
     g_audio.tried = true;
 
@@ -170,6 +199,7 @@ bool ensure() {
 
 // 把放完了的一次性声音收掉（循环的永远不会「放完」，得等 stop()）
 void collect() {
+    Engine& g_audio = audioState();
     for (size_t i = 0; i < g_audio.oneshots.size();) {
         ma_sound* s = g_audio.oneshots[i];
         if (ma_sound_at_end(s)) {
@@ -190,6 +220,7 @@ void collect() {
 }
 
 void stopAll() {
+    Engine& g_audio = audioState();
     for (ma_sound* s : g_audio.oneshots) {
         ma_sound_stop(s);
         ma_sound_uninit(s);
@@ -205,6 +236,12 @@ void stopAll() {
 // 关设备。学生手里可能还攥着 Sound —— 先替它们把 ma_sound 拆了并标记成空，
 // 免得引擎没了之后它们的析构函数再去动一块已经不存在的内存。
 void closeEngine() {
+    // g_engineAlive 为 false 只有两种可能：Engine 从来没被真正用过（这次直接跳过，
+    // 没什么要关的），或者 Engine 的静态局部对象已经在程序退出时被销毁了（这时候
+    // audioState() 会返回一个指向已销毁对象的引用，碰它的成员是 UB）——两种情况下
+    // 「什么都不做」都是安全且正确的，所以在摸 audioState() 之前先挡在这里。
+    if (!g_engineAlive) return;
+    Engine& g_audio = audioState();
     if (!g_audio.ok) {
         g_audio.tried = false;
         return;
@@ -224,8 +261,14 @@ void closeEngine() {
     ringClear();
 }
 
-// 兜底：万一谁忘了在退出时调 internal::audioShutdown()，进程结束前也会关干净。
-// （声明在 g_audio 之后，所以它先被销毁，engine 还在。）
+// 兜底：万一谁忘了在退出时调 internal::audioShutdown()，进程结束前也尽量关干净。
+// 以前这里靠"声明在 g_audio 之后，所以 Closer 先被销毁、engine 还在"来保证顺序；
+// 现在 g_audio 是 Meyers 单例（audioState() 里的函数内 static），构造时机跟着
+// "第一次真的用到声音"走，跟这个命名空间级的 Closer 的构造时机对不上——Closer 几乎
+// 总是先构造（TU 的静态初始化阶段，早于任何一次真正的音频调用），那么反过来，销毁
+// 时 Engine 会先死、Closer 后死，到 Closer 的析构函数这里 Engine 已经不在了。
+// 所以 closeEngine() 自己用 g_engineAlive 挡一下：Engine 已经不在了就什么都不做，
+// 不会 use-after-destroy——不再依赖这两个对象谁先声明、谁先构造。
 struct Closer {
     ~Closer() { closeEngine(); }
 };
@@ -233,6 +276,7 @@ Closer g_closer;
 
 // 打开一个文件。Windows 上中文路径要走宽字符那套（和 internal::fopenU8 一个道理）。
 ma_result initSoundFromFile(const std::string& path, ma_uint32 flags, ma_sound* out) {
+    Engine& g_audio = audioState();
 #if defined(_WIN32)
     return ma_sound_init_from_file_w(&g_audio.engine, internal::widen(path).c_str(), flags, nullptr,
                                      nullptr, out);
@@ -243,6 +287,7 @@ ma_result initSoundFromFile(const std::string& path, ma_uint32 flags, ma_sound* 
 
 bool startFile(const std::string& path, bool looping) {
     if (!ensure()) return false;
+    Engine& g_audio = audioState();
     collect();
     // 一次性音效整段解码（放的时候不卡）；背景音乐边放边解（几分钟的 mp3 也秒开）
     ma_uint32 flags = MA_SOUND_FLAG_NO_SPATIALIZATION |
@@ -275,6 +320,7 @@ void audioShutdown() { closeEngine(); }
 
 std::string audioDoctor() {
     ensure();   // 自检就是要真的去开一次，不然什么也没说
+    Engine& g_audio = audioState();
     if (g_audio.ok) {
         char buf[512];
         std::snprintf(buf, sizeof(buf), "%s · %s · %u Hz · %u 声道", g_audio.backendName.c_str(),
@@ -389,15 +435,17 @@ bool play(const std::string& path) { return startFile(path, false); }
 bool loop(const std::string& path) { return startFile(path, true); }
 
 void stop() {
+    Engine& g_audio = audioState();
     if (!g_audio.ok) return;
     stopAll();
 }
 
 void volume(double v) {
+    Engine& g_audio = audioState();
     g_audio.vol = clamp(v, 0.0, 1.0);
     if (ensure()) ma_engine_set_volume(&g_audio.engine, (float)g_audio.vol);
 }
-double volume() { return g_audio.vol; }
+double volume() { return audioState().vol; }
 
 double loudness() {
     ensure();   // 没设备也无所谓：环里一直是空的，读出来就是 0
@@ -426,7 +474,7 @@ std::vector<float> spectrum(int bands) {
     std::vector<float> now((size_t)bands, 0.f);
     if (got == kAnalysisN) {
         internal::audioAnalyze(buf, kAnalysisN, bands,
-                               (double)(g_audio.sampleRate ? g_audio.sampleRate : 48000),
+                               (double)(audioState().sampleRate ? audioState().sampleRate : 48000),
                                now.data());
     }
     // 时间平滑：柱子涨得快、落得慢（0.8 的衰减），不然每帧一个样，看着像噪点
@@ -456,7 +504,7 @@ Sound Sound::load(const std::string& path) {
     }
     impl->ok = true;
     s.p_ = impl;
-    g_audio.sounds.push_back(std::weak_ptr<SoundNode>(impl));
+    audioState().sounds.push_back(std::weak_ptr<SoundNode>(impl));
     return s;
 }
 
