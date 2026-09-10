@@ -26370,8 +26370,10 @@ inline void parse(int argc, char** argv) {
 #if defined(_WIN32)
     // argv 在 Windows 上是当前 ANSI 代码页（cp936/cp437...）的字节，不是 UTF-8——Easel 全库
     // （existsU8、widen() 等）按 UTF-8 处理字符串，直接用会把 --name 测试作品 这种参数搞乱码
-    // 甚至拒收。这里不管传进来的 argv 是什么，一律用 GetCommandLineW() 重新取一份 UTF-16 的
-    // 命令行，CommandLineToArgvW() 切好，逐个转 UTF-8，再走下面同一套解析逻辑。
+    // 甚至拒收。真正的修法是用 GetCommandLineW() 重新取一份 UTF-16 的命令行，
+    // CommandLineToArgvW() 切好，逐个转 UTF-8，再走下面同一套解析逻辑——但测试会拿伪造的 argv
+    // （不是这个进程的真实命令行，GetCommandLineW() 返回的其实是 easel_tests.exe 自己那份）直接
+    // 调 cli::parse() 来验证解析逻辑，这种情况下必须原样用传进来的 argv，不能被替换掉。
     std::vector<std::string> u8owned;    // 转换后的 UTF-8 参数，下面的指针都指向这里的存储
     std::vector<char*>       u8argv;
     int     wargc    = 0;
@@ -26388,12 +26390,33 @@ inline void parse(int argc, char** argv) {
             u8owned.push_back(std::move(s));
         }
         ::LocalFree(wargvRaw);
-        u8argv.reserve(u8owned.size());
-        for (std::string& s : u8owned) u8argv.push_back(&s[0]);
-        argc = (int)u8argv.size();
-        argv = u8argv.empty() ? nullptr : u8argv.data();
+
+        // 判定传进来的 argv 是不是就是这个进程的真实命令行：个数得一样，且 argv[0] 和
+        // wargv[0]（都转成 UTF-8、转小写、反斜杠换成正斜杠后）相等，或者其中一个是另一个的
+        // 路径尾部——main() 收到的 argv[0] 可能是短名/相对路径，GetCommandLineW() 给的通常是
+        // 解析过的完整路径，两者不会逐字节相等。只要判定不成立（比如测试伪造的 argv，或者
+        // argc 对不上），就说明这不是真实命令行，原样使用传进来的 argv，不做任何替换。
+        auto normalize = [](std::string s) {
+            for (char& c : s) c = (c == '\\') ? '/' : (char)std::tolower((unsigned char)c);
+            return s;
+        };
+        auto sameTail = [](const std::string& x, const std::string& y) {
+            if (x.empty() || y.empty()) return false;
+            if (x.size() >= y.size()) return x.compare(x.size() - y.size(), y.size(), y) == 0;
+            return y.compare(y.size() - x.size(), x.size(), x) == 0;
+        };
+
+        bool isRealCommandLine = (argc == wargc) && argc > 0 && argv && argv[0] && !u8owned.empty() &&
+                                  sameTail(normalize(argv[0]), normalize(u8owned[0]));
+
+        if (isRealCommandLine) {
+            u8argv.reserve(u8owned.size());
+            for (std::string& s : u8owned) u8argv.push_back(&s[0]);
+            argc = (int)u8argv.size();
+            argv = u8argv.empty() ? nullptr : u8argv.data();
+        }
     }
-    // CommandLineToArgvW 拿不到就照旧用传进来的 argv（大概率是乱码，但至少不崩）
+    // CommandLineToArgvW 拿不到，或者传进来的 argv 判定不是真实命令行，就照旧用传进来的 argv。
 #endif
 
     if (argc > 0 && argv && argv[0]) a.program = argv[0];

@@ -157,6 +157,19 @@ TEST_CASE("命令行参数") {
     seed(EASEL_FIXED_SEED);
 }
 
+TEST_CASE("命令行参数：伪造的 argv 必须原样解析（不能被真实命令行替换掉）") {
+    // 这条在所有平台都要过；在 Windows 上它验证的正是 cli::parse 里那条「传进来的 argv
+    // 是不是就是这个进程的真实命令行」判定——argc 对不上（这里是 5，测试可执行文件自己
+    // 跑起来的 argc 通常不是 5），判定不成立，就必须原样用下面这份伪造的 argv，而不是被
+    // GetCommandLineW() 取到的 easel_tests.exe 自己的命令行覆盖掉。
+    const char* argv[] = {"./fake-program", "--seed", "42", "--open", "x.json"};
+    cli::parse(5, (char**)argv);
+    CHECK(cli::args().str("open") == "x.json");
+    CHECK(current_seed() == 42u);
+    cli::parse(0, nullptr);              // 清掉，别影响后面的用例
+    seed(EASEL_FIXED_SEED);
+}
+
 TEST_CASE("文件读写与 JSON 往返") {
     std::string path = "build_test_tmp/x.json";
     json        j = json{{"a", 1}, {"b", json::array({1, 2, 3})}};
