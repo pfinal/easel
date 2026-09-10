@@ -54,6 +54,8 @@ For a slightly bigger, interactive example (a ring of draggable-slider points), 
 
 ## Getting started
 
+Prebuilt release packages: see [Releases](https://github.com/pfinal/easel/releases).
+
 ### macOS
 
 ```bash

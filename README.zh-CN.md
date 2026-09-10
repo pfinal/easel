@@ -53,6 +53,8 @@ int main(int argc, char** argv) {
 
 ## 快速开始
 
+发布包见 [Releases](https://github.com/pfinal/easel/releases)。
+
 ### macOS
 
 ```bash

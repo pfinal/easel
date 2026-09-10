@@ -6,9 +6,11 @@ scripts/make_toolbox.py 组装），但 macOS 上不内置 cmake/ninja/编译器
 
     python3 scripts/make_bundle_mac.py
 
-产出 build/pack/Easel-<版本>-macos/（以及同名 .zip）：
+产出 build/pack/Easel-<版本>-macos-<arch>/（以及同名 .zip）——arch 是打包这台机器的
+`platform.machine()`（Apple Silicon 是 arm64，Intel Mac 是 x86_64；两种架构编出来的
+Easel.app 不能跨架构运行，包名必须带上它，免得人从 Release 页面拿错架构）：
 
-    Easel-0.1.1-macos/
+    Easel-0.1.1-macos-arm64/
     ├── Easel.app/                本机编的（EASEL_MACOS_BUNDLE=ON + Release），已 ad-hoc 签名
     │   └── Contents/
     │       ├── MacOS/Easel       可执行文件
@@ -42,6 +44,7 @@ Contents/easel 软链、（都弄完之后才）ad-hoc 签名、（默认）打 
 import argparse
 import json
 import os
+import platform
 import re
 import shutil
 import subprocess
@@ -73,7 +76,11 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EASEL_ITEMS = ["CMakeLists.txt", "LICENSE", "cmake", "include", "src", "vendor", "assets",
                "dist", "template", "template-hello", "examples", "docs"]
 
-README_TXT = """Easel {version} · macOS 发布包
+README_TXT = """Easel {version} · macOS 发布包（{arch}）
+
+这份包是在 {arch} 机器上编的，只能在 {arch} 的 Mac 上跑（Apple Silicon 是 arm64，
+Intel Mac 是 x86_64，两者不能互换；装错了双击直接打不开或者闪退，去 Releases 页面
+换一份架构对的）。
 
 把 Easel.app 拖进「应用程序」（/Applications）即可，双击打开工作台（第一次可能
 要右键 -> 打开，绕开「无法验证开发者」提示）。
@@ -209,7 +216,8 @@ def main():
         return 2
 
     version = easel_version()
-    name = f"Easel-{version}-macos"
+    arch = platform.machine()
+    name = f"Easel-{version}-macos-{arch}"
     out_root = os.path.join(os.path.abspath(args.out), name)
     build_dir = os.path.join(ROOT, "build", "mac-release")
 
@@ -281,7 +289,7 @@ def main():
     print(f"  licenses/ 收了 {nlic} 份")
 
     with open(os.path.join(out_root, "README.txt"), "w", encoding="utf-8") as f:
-        f.write(README_TXT.format(version=version, cmake_note=CMAKE_NOTE))
+        f.write(README_TXT.format(version=version, arch=arch, cmake_note=CMAKE_NOTE))
 
     print(f"    展开后 {dir_size(out_root)/1e6:.0f} MB")
 

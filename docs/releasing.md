@@ -1,0 +1,108 @@
+# 发版流程（维护者文档）
+
+给要出正式 Release 的人看的。学生/普通用户不需要读这份，直接去
+[Releases](https://github.com/pfinal/easel/releases) 下包就行。
+
+## 整体流程
+
+1. 改版本号（下面「要改哪几处」）。
+2. 跑 `python3 scripts/amalgamate.py`，把 `dist/easel.hpp` 重新生成一遍
+   （`.github/workflows/ci.yml` 的 `bare-compile` job 会用
+   `scripts/amalgamate.py --check` 校验 `dist/` 是不是最新的，version 字符串
+   编进了合成产物的头部注释和内容里，版本号改了不跑这一步 CI 会红）。
+3. 提交：
+
+   ```bash
+   git add CMakeLists.txt include/easel/core.h dist/
+   git commit -m "chore: bump version to 0.1.2"
+   git push
+   ```
+
+4. 打 tag、推上去：
+
+   ```bash
+   git tag v0.1.2
+   git push --tags
+   ```
+
+   `.github/workflows/release.yml` 会在 tag 推上去之后自动跑：并行编 Windows
+   绿色工具箱 zip（`windows` job）和 macOS `.app` zip（`macos` job），两个都
+   成功之后 `release` job 把它们挂到一个**草稿** Release 上（`draft: true`，
+   不会直接公开）。
+
+5. 人工检查：去 Actions 页面等三个 job 跑完，去 Releases 页面找到那个新草稿：
+   - 两个 zip 都下载下来，本机实际解压、打开，确认能跑起来（Windows 双击
+     `easel.exe`，macOS 把 `Easel.app` 拖进「应用程序」双击）。
+   - 草稿的 body 是自动生成的，核对一下版本号、文件名对不对。
+   - 没问题了，在 Releases 页面点这个草稿 → **Publish release**。
+
+   出了问题（包里缺东西、版本号错了……）：删掉这个草稿 Release（不影响已经
+   打的 tag），改好之后要么改完重新推一个新 tag（比如 `v0.1.3`），要么删掉
+   本地和远端的旧 tag 后原地重打：
+
+   ```bash
+   git push --delete origin v0.1.2
+   git tag --delete v0.1.2
+   # 改完，重来第 4 步
+   ```
+
+调试这条流水线本身（release.yml 有没有写对），不用真的打 tag——
+`workflow_dispatch` 也能手动跑（Actions 页面 → Release → Run workflow）。手动
+跑时如果不填 `tag` 输入框，草稿 Release 会用当前分支名当 tag（不是真实版本
+号），纯粹为了验证流程能不能走通，跑完记得把这个调试用的草稿 Release 删掉。
+
+## 版本号要改哪几处
+
+Easel 的版本号存了两份，都要跟着改，两边不一致的话 `scripts/make_toolbox.py`
+/ `scripts/make_bundle_mac.py` 产出的包名和 `easel-prebuilt.json` 里的
+`version` 字段用的是 `include/easel/core.h` 那份，跟 `CMakeLists.txt` 那份不
+会自动同步：
+
+1. `CMakeLists.txt` 顶部的 `project(easel VERSION 0.1.1 LANGUAGES CXX)`。
+2. `include/easel/core.h` 里的四个宏：
+
+   ```cpp
+   #define EASEL_VERSION       "0.1.2"
+   #define EASEL_VERSION_MAJOR 0
+   #define EASEL_VERSION_MINOR 1
+   #define EASEL_VERSION_PATCH 2
+   ```
+
+   `scripts/make_toolbox.py` / `scripts/make_bundle_mac.py` 的 `easel_version()`
+   是从这个文件里用正则 `#define\s+EASEL_VERSION\s+"([0-9.]+)"` 抠出来的，格式
+   （引号、宏名、空格）不能改。
+
+3. 改完两处之后跑 `python3 scripts/amalgamate.py`——版本号也会被编进
+   `dist/easel.hpp`。
+
+release.yml 里 Release 草稿的标题/tag 用的是 **git tag**（比如 `v0.1.2`），跟
+上面这两处的版本号是分开的两件事：tag 决定这次 Release 叫什么、挂在哪个
+commit 上；`core.h` 里的版本号决定产物 zip 文件名里的版本号（`Easel-0.1.2-
+windows-x64.zip` 这种）。打 tag 前先把 `core.h` 的版本号改成一致，不然会出现
+「tag 叫 v0.1.2，包名却是 Easel-0.1.1-...」这种对不上的情况。
+
+## 限制：Windows 包里的预编译产物只能由 CI 产
+
+`release.yml` 的 `windows` job 在 `windows-latest` runner 上用 w64devkit
+（MinGW-w64 的 gcc/g++）+ Ninja 把 Easel 编一遍、`cmake --install` 装出
+Windows/MinGW 的预编译包（`.a` 静态库 + `easel.exe`），再用
+`scripts/make_toolbox.py --prebuilt-dir` 塞进绿色工具箱 zip 里。
+
+这一步**必须在真正的 Windows 机器（或者 CI 的 Windows runner）上跑**——本机
+是 Mac，Mac 上的 clang 编不出 MinGW/Windows 能跑的 `.exe`/`.a`（`.a` 里的目
+标文件格式、调用约定、符号修饰都跟 Windows 的不是一回事，交叉编译需要一整
+套 MinGW 交叉工具链，这仓库没有配这个）。`scripts/make_toolbox.py` 本身可以
+在 Mac 上跑（不给 `--prebuilt-dir` 就行），但那样组出来的工具箱里没有预编译
+包，用户解压后第一次点 `easel.bat` 要现场编三分钟——这是本机唯一能验的路径
+（`python3 scripts/make_toolbox.py`，不带 `--prebuilt-dir`），完整验证（带预
+编译包那条路）只能靠 CI。
+
+同理，`scripts/make_bundle_mac.py` 产的 `.app` 只能在 macOS 上编——脚本开头
+就检查了 `sys.platform != "darwin"` 直接退出。CI 里 `macos` job 跑在
+`macos-latest`（Apple Silicon / arm64）上，产出的包只能在 arm64 的 Mac 上跑；
+GitHub 官方的 `macos-13`（Intel）runner 镜像已经下线（`images/macos/
+macos-13-Readme.md` 已经 404，README 里当前支持的镜像列表里也没有它了），所
+以目前没有 CI 产的 x86_64 macOS 包——Intel Mac 用户得自己跑
+`scripts/make_bundle_mac.py` 从源码编一份。以后如果 GitHub 出了新的 x64
+macOS 镜像，可以在 `release.yml` 的 `macos` job 里加一个 `strategy.matrix`
+项指过去。

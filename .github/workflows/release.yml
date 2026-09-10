@@ -1,0 +1,205 @@
+name: Release
+
+# 打 tag（v*）就自动出两个平台的发布包，挂到一个草稿 Release 上等人工确认。
+# workflow_dispatch 留着手动跑：调试这个流水线时不用真的打 tag。
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要发布的版本号（例如 v0.1.2）。留空则用当前触发时的 ref 名（手动从分支跑时那就是分支名，仅供调试）。'
+        required: false
+        default: ''
+
+jobs:
+  # ============================================================================
+  #  Windows：绿色工具箱 zip（gcc/cmake/ninja + Easel 源码 + Windows/MinGW 预编译包）。
+  #  装工具链那一步照抄 ci.yml 的 windows-toolbox job，版本号必须一字不差
+  #  （w64devkit 1.23.0 + Ninja 1.13.2，跟 scripts/make_toolbox.py 的 COMPONENTS 对齐）。
+  # ============================================================================
+  windows:
+    name: Windows 发布包（绿色工具箱）
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # scripts/abi.py 的 git_commit() 和 VERSION.json 要读 git 信息
+
+      - name: 下载 w64devkit 1.23.0 + Ninja 1.13.2，解到 C:\kit
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path C:\kit | Out-Null
+
+          Invoke-WebRequest -Uri "https://github.com/skeeto/w64devkit/releases/download/v1.23.0/w64devkit-1.23.0.zip" -OutFile "$env:RUNNER_TEMP\w64devkit.zip"
+          # zip 顶层已经是 w64devkit/ 这一层目录：解到 C:\kit 下面（不是 C:\kit\w64devkit 下面），
+          # 那一层目录本身展开出来正好就是 C:\kit\w64devkit，bin 就落在 C:\kit\w64devkit\bin。
+          Expand-Archive -Path "$env:RUNNER_TEMP\w64devkit.zip" -DestinationPath "C:\kit" -Force
+
+          Invoke-WebRequest -Uri "https://github.com/ninja-build/ninja/releases/download/v1.13.2/ninja-win.zip" -OutFile "$env:RUNNER_TEMP\ninja-win.zip"
+          # ninja 的 zip 里直接是 ninja.exe，没有顶层目录，直接解到 C:\kit\ninja 就行。
+          Expand-Archive -Path "$env:RUNNER_TEMP\ninja-win.zip" -DestinationPath "C:\kit\ninja" -Force
+
+          Add-Content $env:GITHUB_PATH "C:\kit\w64devkit\bin"
+          Add-Content $env:GITHUB_PATH "C:\kit\ninja"
+
+      - name: 确认工具链版本
+        shell: pwsh
+        run: |
+          gcc --version | Select-Object -First 1
+          g++ --version | Select-Object -First 1
+          ninja --version
+
+      - name: 依赖源码抓进 vendor/（工具箱要打包源码，也要用它构建）
+        shell: pwsh
+        run: python scripts/vendor.py
+
+      - name: 配置（mingw 预设默认是 RelWithDebInfo，发布包要 Release，覆盖掉）
+        shell: pwsh
+        run: cmake --preset mingw -DCMAKE_BUILD_TYPE=Release
+
+      - name: 构建 easel_workbench
+        shell: pwsh
+        run: cmake --build build/mingw --target easel_workbench --parallel
+
+      - name: cmake --install（装出 Windows/MinGW 预编译包）
+        shell: pwsh
+        run: cmake --install build/mingw --prefix build/prebuilt-win
+
+      - name: 摆成 make_toolbox.py --prebuilt-dir 认的布局
+        # resolve_prebuilt_layout() 认的第一种布局：
+        #   <dir>/prebuilt/easel-prebuilt.json   ← cmake --install 的 prefix
+        #   <dir>/easel.exe                      ← 工作台可执行文件
+        # cmake --install 是直接把 easel-prebuilt.json 写在 --prefix 目录顶层的，
+        # 所以这里把 build/prebuilt-win 整个挪进 build/toolbox-input/prebuilt/，
+        # 再把 easel.exe 摆到 build/toolbox-input/ 同级。
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path build/toolbox-input | Out-Null
+          Move-Item -Path build/prebuilt-win -Destination build/toolbox-input/prebuilt
+          Copy-Item -Path build/mingw/easel.exe -Destination build/toolbox-input/easel.exe
+
+      - name: 打绿色工具箱 zip（带上一步的预编译包，用户解压就能用不用等三分钟现编）
+        shell: pwsh
+        run: python scripts/make_toolbox.py --prebuilt-dir build/toolbox-input
+
+      - name: 上传 windows-zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-zip
+          path: build/pack/Easel-*-windows-x64.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  # ============================================================================
+  #  macOS：scripts/make_bundle_mac.py 自己配置 + 编译 + install + 打包 + ad-hoc 签名。
+  #  GitHub 的 macos-latest 是 Apple Silicon（arm64），产出的包只能在 arm64 上跑；
+  #  make_bundle_mac.py 已经把 platform.machine() 拼进了产物名，所以这里不用额外处理。
+  #
+  #  本来想再加一个 macos-13（Intel/x86_64）矩阵项出 x86_64 的包，但 macos-13 已经从
+  #  actions/runner-images 下线了（images/macos/macos-13-Readme.md 404，README 里的
+  #  受支持镜像列表里也没有它，最老的 x64 镜像是已标记 deprecated 的 macos-14），所以
+  #  这里只出 arm64 一份，x86_64 缺失这件事写进下面 release job 生成的 Release 说明里。
+  # ============================================================================
+  macos:
+    name: macOS 发布包（Apple Silicon / arm64）
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 构建 + 打包 + 签名（脚本自己全包了）
+        run: python3 scripts/make_bundle_mac.py
+
+      - name: 上传 macos-zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-zip
+          path: build/pack/Easel-*-macos-*.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  # ============================================================================
+  #  两个包都出来之后，建一个草稿 Release 把它们挂上去 —— 草稿，不是正式发布：
+  #  人工确认两个 zip 都能正常解压打开之后，再去 GitHub 网页上点 Publish。
+  # ============================================================================
+  release:
+    name: 创建 GitHub Release（草稿）
+    needs: [windows, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-zip
+          path: artifacts/windows
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-zip
+          path: artifacts/macos
+
+      - name: 核对产物
+        run: |
+          echo "== windows =="; find artifacts/windows -type f
+          echo "== macos =="; find artifacts/macos -type f
+
+      - name: 算 tag / 版本号
+        id: ver
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: 生成 Release 正文
+        run: |
+          cat > RELEASE_NOTES.md <<EOF
+          # Easel ${{ steps.ver.outputs.version }}
+
+          ## 下载
+
+          - **Windows x64**：\`Easel-${{ steps.ver.outputs.version }}-windows-x64.zip\`
+          - **macOS（Apple Silicon / arm64）**：\`Easel-${{ steps.ver.outputs.version }}-macos-arm64.zip\`
+
+          > 这份 macOS 包只在 arm64（Apple Silicon）机器上编译和签名，只能在 arm64 的 Mac 上跑。
+          > GitHub 官方的 \`macos-13\`（Intel）Runner 镜像已经下线，目前没有官方产出的 x86_64
+          > 版本；Intel Mac 用户需要按 README「从源码构建」自己编一份。
+
+          ## 用法
+
+          - **Windows**：解压 zip，双击 \`easel.exe\` 直接用（工具箱里自带编译器和 CMake/Ninja，
+            不用装任何东西、不用联网）。
+          - **macOS**：解压 zip，把 \`Easel.app\` 拖进「应用程序」；第一次打开要右键选「打开」，
+            绕开「无法验证开发者」的提示。
+
+          ## 系统要求
+
+          - Windows 7 SP1 x64 及以上（Win10/11 同样适用；Win7 尚未实测）
+          - macOS 11 及以上，Apple Silicon（arm64）
+
+          ## 平台差异
+
+          Windows 包里自带编译器（gcc/g++）、CMake、Ninja，解压即用；macOS 包不内置这些——
+          使用前要先装好 Xcode 命令行工具（\`xcode-select --install\`）和 CMake
+          （\`brew install cmake\`，或去 https://cmake.org/download/ 下官方 dmg）。
+
+          ---
+          这是 CI 自动生成的草稿 Release：两个 zip 都下载下来实际解压打开确认没问题，
+          再点 Publish release。
+          EOF
+          cat RELEASE_NOTES.md
+
+      - name: 创建 Release（草稿）
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: Easel ${{ steps.ver.outputs.version }}
+          draft: true
+          body_path: RELEASE_NOTES.md
+          files: |
+            artifacts/windows/**/*.zip
+            artifacts/macos/**/*.zip
