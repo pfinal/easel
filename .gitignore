@@ -14,6 +14,7 @@ template/debug/*.json
 imgui.ini
 compile_commands.json
 dist/*.zip
+/dist-mac/
 __pycache__/
 *.pyc
 .idea/

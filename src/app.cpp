@@ -286,7 +286,7 @@ std::string App::doctor() const {
     if (!f.note.empty()) o << "  提示        : " << f.note << "\n";
     o << "  ---- 编辑栏与导出 ----\n";
     const internal::EditorPaths& ep = internal::editorPaths();
-    o << "  工程目录    : " << (ep.projectDir.empty() ? "(不知道)" : ep.projectDir) << "\n";
+    o << "  工程目录    : " << (ep.projectDir.empty() ? "(没打开工程)" : ep.projectDir) << "\n";
     o << "  Easel 源码  : " << (ep.easelDir.empty() ? "(不在旁边，导出时不带界面部分)" : ep.easelDir)
       << "\n";
     o << "  编辑的文件  : " << (ep.ok ? ep.file : "(没找到 src/solver.cpp)") << "\n";

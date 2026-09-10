@@ -57,6 +57,15 @@ message(STATUS "Easel: 提交 ${EASEL_GIT_SHA} · ${EASEL_BUILT_WITH}")
 option(EASEL_BUILD_EXAMPLES "编译 examples/"           ${EASEL_IS_TOP})
 option(EASEL_BUILD_TESTS    "编译 tests/"              ${EASEL_IS_TOP})
 option(EASEL_ENABLE_ASAN    "打开地址消毒器（查越界）" OFF)
+# ---- macOS 发布包（.app bundle）-------------------------------------------
+# 默认 OFF：build/default/Easel 一直是裸可执行文件，CI、文档、日常命令都认这个路径，
+# 不想因为打包需求破坏它们。只有 scripts/make_bundle_mac.py 打包时才显式打开这个选项，
+# 那时 easel_workbench 才会变成 build/default/Easel.app/Contents/MacOS/Easel。
+option(EASEL_MACOS_BUNDLE "打包成 Easel.app（仅 macOS，默认 OFF，裸 exe 不受影响）" OFF)
+if(EASEL_MACOS_BUNDLE AND NOT APPLE)
+  message(STATUS "Easel: EASEL_MACOS_BUNDLE 只在 macOS 上有意义，其它平台上忽略")
+  set(EASEL_MACOS_BUNDLE OFF)
+endif()
 # ---- 预编译包（D-26 绿色工具箱）------------------------------------------
 # 打开时会多做两件事：
 #   1. 把 glfw / nfd / nlohmann_json / doctest 各自的 install 规则也打开
@@ -449,6 +458,25 @@ if(EASEL_BUILD_WORKBENCH)
     if(MSVC)
       target_link_options(easel_workbench PRIVATE "/ENTRY:mainCRTStartup")
     endif()
+  endif()
+  if(EASEL_MACOS_BUNDLE)
+    # 打包成 Easel.app：可执行文件挪进 Contents/MacOS/，图标和 Info.plist 跟着装。
+    # 之后可执行文件在 build/default/Easel.app/Contents/MacOS/Easel（比裸 exe 多四层）。
+    set(_easel_icns "${CMAKE_CURRENT_SOURCE_DIR}/assets/Easel.icns")
+    if(EXISTS "${_easel_icns}")
+      target_sources(easel_workbench PRIVATE "${_easel_icns}")
+      set_source_files_properties("${_easel_icns}" PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+    else()
+      message(STATUS "Easel: 没找到 ${_easel_icns}，打出来的 Easel.app 没有自定义图标")
+    endif()
+    set_target_properties(easel_workbench PROPERTIES
+      MACOSX_BUNDLE                     TRUE
+      MACOSX_BUNDLE_INFO_PLIST          "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Info.plist.in"
+      MACOSX_BUNDLE_ICON_FILE           "Easel.icns"
+      MACOSX_BUNDLE_BUNDLE_NAME         "Easel"
+      MACOSX_BUNDLE_GUI_IDENTIFIER      "net.daimaku.easel"
+      MACOSX_BUNDLE_BUNDLE_VERSION      "${PROJECT_VERSION}"
+      MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}")
   endif()
 endif()
 

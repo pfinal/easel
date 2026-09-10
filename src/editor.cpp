@@ -119,14 +119,16 @@ void resolvePaths(Ed& e) {
 
     // 用预编译的 Easel（<工具箱>/easel/prebuilt，D-26）时，libeasel.a 是在**打包那台
     // 机器**上编的，上面两个编译期常量指的都是打包机的路径 —— 在学生机上要么不存在，
-    // 要么（最坏情况：就在打包那台机器上做实验）指到别人的工程去。所以这里的顺序是
-    // 「运行期看得见的东西优先，编译期常量垫底」：
+    // 要么（最坏情况：就在打包那台机器上做实验，比如这次 macOS 发布包就撞上了）指到
+    // 打包那个人电脑上一个不相关的工程/仓库去。所以这里的顺序是「运行期看得见的东西
+    // 优先，编译期常量垫底」：
     //   工程目录 ← ① 当前目录。工作台（D-29）起作品子进程时把工作目录设成工程根，
     //                 学生双击 exe 也一样，所以这条在预编译路径下就是正解；
     //              ② 编译期常量（源码构建 / add_subdirectory 走的路，一直是对的）；
     //              ③ exe 的上一级（build/bin/app → build/，少见但留着）；
-    //              ④ 全没有就用当前目录。
-    //   Easel 源码 ← 编译期常量不在了就从 exe 往上翻找 easel/ 目录（见下面那段）。
+    //              ④ 全没匹配上：留空，别瞎猜——见下面 e.paths.projectDir 那段注释。
+    //   Easel 源码 ← 运行期从 exe 往上翻找 easel/ 目录（见下面那段），翻不到才退到
+    //                编译期常量。
     // 「导出源码」（--export）和 F9 编辑栏认的就是这两个值。
     // 光看候选目录底下有没有 src/ 不够严——比如从 easel 仓库根目录起进程时，仓库自己
     // 的 src/ 也存在，会把 projectDir 错判成 easel 本身。所以每个候选都要过
@@ -141,29 +143,54 @@ void resolvePaths(Ed& e) {
             break;
         }
     }
-    if (e.paths.projectDir.empty()) e.paths.projectDir = cwd;
+    // 全没匹配上就是真没打开工程（比如刚解压发布包、双击 Easel.app 看看而已），留空，
+    // 别退回 cwd —— 之前这里退回过 cwd，但 GLFW 的 Cocoa 后端默认会在起窗口时把进程
+    // cwd chdir 到 <Easel.app>/Contents/Resources/（vendor/glfw/src/cocoa_init.m 的
+    // changeToResourcesDirectory()，GLFW_COCOA_CHDIR_RESOURCES 默认开），所以 mac
+    // 发布包上这个「退回 cwd」的兜底实际退回的是 Resources/，doctor 里就会看到一个
+    // 一本正经但完全错误的工程目录。留空之后 doctor() / app.cpp 里判断
+    // ep.projectDir.empty() 打印「(没打开工程)」，比给一个错的路径诚实。
+    // 注：--export 是在 backend::init()（会走到 glfwInit）**之前**处理的（见
+    // App::run()），所以「作品自己导出自己」时 cwd 还是调用者原本的 cwd，没被
+    // GLFW chdir 污染，这条路径不受影响，下面的候选顺序也没变。
 
-    e.paths.easelDir = firstExisting({compiledEasel, joinPath(e.paths.projectDir, "easel"),
-                                      joinPath(fs::dirOf(e.paths.projectDir), "easel")});
-    if (e.paths.easelDir.empty()) {
-        // 从 exe 往上翻几层找 easel/ 源码树 —— 和 toolchain.cpp 找绿色工具箱是同一套
-        // 办法，工具箱的布局本来就是 <工具箱>/easel/ 和 w64devkit/ cmake/ ninja/ 并排。
-        // toolchain() 已经把工具箱根目录翻出来了（g_tc.kit），先用它，省一遍遍历。
+    // Easel 源码：「就近优先」——运行时看得见的东西打败编译期常量。
+    //   ① 从 exe 往上翻几层找 easel/ 源码树（跟 toolchain.cpp 找绿色工具箱是同一套
+    //      办法：工具箱布局是 <工具箱>/easel/ 和 w64devkit/ cmake/ ninja/ 并排，
+    //      macOS 发布包是 <包根>/Easel.app 和 <包根>/easel/ 并排，都是「往上翻能找到
+    //      跟 easel/ 并排的东西」，几层就到）；
+    //   ② toolchain().kit（findCxx() 顺路翻出来的工具箱根目录，省一遍遍历；Mac 包没
+    //      有 w64devkit/，kit 会是空，下面判空跳过就好，不算错误）；
+    //   ③ 工程目录旁边（开发时常见摆法：workspace/easel + workspace/myproject，源码
+    //      构建、非顶层 add_subdirectory 走这条）；
+    //   ④ 编译期常量 EASEL_SOURCE_DIR 垫底——它只在「源码构建 easel 本身」这条路上
+    //      才指向正确的地方；预编译包发布出去之后，这个编译期常量在别人机器上要么
+    //      不存在，要么指向打包那台机器上的路径（这次事故就是指到了打包机的仓库）。
+    // 每个候选都要经过同一套「真源码树」判定：<候选>/CMakeLists.txt 和
+    // <候选>/include/easel/easel.h 都要在——光有个同名目录不算，「导出源码」要从
+    // 这儿拷 CMakeLists / include / src / vendor 的许可证。
+    auto looksLikeEaselTree = [](const std::string& cand) {
+        return existsU8(joinPath(cand, "CMakeLists.txt")) &&
+               existsU8(joinPath(cand, "include/easel/easel.h"));
+    };
+    e.paths.easelDir.clear();
+    {
         std::vector<std::string> dirs;
-        if (!toolchain().kit.empty()) dirs.push_back(toolchain().kit);
-        std::string dir = exeDir();
+        std::string              dir = exeDir();
         for (int up = 0; up < 6 && !dir.empty(); ++up) {
-            dirs.push_back(dir);
+            dirs.push_back(joinPath(dir, "easel"));
             std::string parent = fs::dirOf(dir);
             if (parent == dir) break;
             dir = parent;
         }
-        for (const std::string& d : dirs) {
-            // 只认真的源码树：「导出源码」要从这儿拷 CMakeLists / include / src / vendor
-            // 的许可证，光有个同名目录不算。
-            std::string cand = joinPath(d, "easel");
-            if (existsU8(joinPath(cand, "CMakeLists.txt")) &&
-                existsU8(joinPath(cand, "include/easel/easel.h"))) {
+        if (!toolchain().kit.empty()) dirs.push_back(joinPath(toolchain().kit, "easel"));
+        if (!e.paths.projectDir.empty()) {
+            dirs.push_back(joinPath(e.paths.projectDir, "easel"));
+            dirs.push_back(joinPath(fs::dirOf(e.paths.projectDir), "easel"));
+        }
+        dirs.push_back(compiledEasel);
+        for (const std::string& cand : dirs) {
+            if (!cand.empty() && looksLikeEaselTree(cand)) {
                 e.paths.easelDir = cand;
                 break;
             }

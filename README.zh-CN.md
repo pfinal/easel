@@ -62,6 +62,8 @@ cmake --preset default && cmake --build --preset default
 
 `./build/default/Easel` 会打开 Workbench："New Project" -> "Build & Run"。这需要 Xcode 命令行工具（`xcode-select --install`）和 CMake。
 
+发布包：下载 zip，双击 `Easel.app`；需要 Xcode 命令行工具和 CMake。
+
 ### Windows
 
 有一个免安装工具箱，包含 gcc、cmake、ninja 和 Easel，由 `scripts/make_toolbox.py` 打包生成。解压后双击 `Easel.bat`（Workbench 启动器）。该工具箱的官方构建会随第一个发布版本一起提供。系统要求 Windows 7 SP1 x64 及以上（Win10/11 同样适用）；Win7 尚未实测。详见 [`windows-green/README.md`](windows-green/README.md)（含 OpenGL/DX11 后端退路说明）。

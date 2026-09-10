@@ -63,6 +63,8 @@ cmake --preset default && cmake --build --preset default
 
 `./build/default/Easel` opens the Workbench: "New Project" -> "Build & Run". This requires the Xcode command line tools (`xcode-select --install`) and CMake.
 
+Release package: download the zip, double-click `Easel.app`. Requires the Xcode command line tools and CMake.
+
 ### Windows
 
 There is a no-install toolbox containing gcc, cmake, ninja, and Easel, assembled by `scripts/make_toolbox.py`. After extracting it, double-click `Easel.bat`. The toolbox's official build ships together with the first release. Requires Windows 7 SP1 x64 or newer (Win10/11 also work); not yet tested on Windows 7. See [`windows-green/README.md`](windows-green/README.md) for details, including the OpenGL/DX11 fallback.

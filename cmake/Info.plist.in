@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Easel.app 的 Info.plist 模板 —— 打包时（EASEL_MACOS_BUNDLE=ON）CMake 会把
+  @VAR@ 替换成对应的 MACOSX_BUNDLE_* 目标属性（在 CMakeLists.txt 里 easel_workbench
+  目标上设置），跟 make_toolbox.py 里那套 Windows .bat 模板是同一个思路：一处定义，
+  打包脚本只管拷。
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>zh_CN</string>
+	<key>CFBundleExecutable</key>
+	<string>@MACOSX_BUNDLE_EXECUTABLE_NAME@</string>
+	<key>CFBundleIconFile</key>
+	<string>Easel</string>
+	<key>CFBundleIdentifier</key>
+	<string>net.daimaku.easel</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>Easel</string>
+	<key>CFBundleDisplayName</key>
+	<string>Easel</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>@MACOSX_BUNDLE_SHORT_VERSION_STRING@</string>
+	<key>CFBundleVersion</key>
+	<string>@MACOSX_BUNDLE_BUNDLE_VERSION@</string>
+	<key>CFBundleSignature</key>
+	<string>????</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>11.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>MIT · daimaku.net</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.developer-tools</string>
+</dict>
+</plist>
