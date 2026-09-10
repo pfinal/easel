@@ -97,7 +97,7 @@ New Project / Build & Run / Stop / Build exe / Export source。项目以独立�
 python3 scripts/vendor.py       # 把九个依赖下载到 vendor/，之后完全离线
 cmake --preset default          # 或 debug（ASan）/ dx11（Windows DirectX 11 后端）
 cmake --build --preset default
-ctest --preset default
+ctest --test-dir build/default --output-on-failure -C RelWithDebInfo  # -C 是为了支持多配置生成器（Windows MSVC）
 ```
 
 ## 目录结构

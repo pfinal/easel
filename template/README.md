@@ -59,9 +59,9 @@ cmake --build --preset default
 > `FetchContent ... GIT_TAG v0.1.0`）。
 
 ```bash
-./build/default/bin/solver data/example.json               # 1. 算法（命令行）
-ctest --preset default                                     # 2. 测试
-./build/default/bin/app --open data/example.json --solve   # 3. 界面
+./build/default/bin/solver data/example.json                                    # 1. 算法（命令行）
+ctest --test-dir build/default --output-on-failure -C RelWithDebInfo            # 2. 测试（-C 是为了支持 Windows MSVC）
+./build/default/bin/app --open data/example.json --solve                        # 3. 界面
 ```
 
 Windows 上把 `./build/default/bin/solver` 换成 `.\build\default\bin\solver.exe`。

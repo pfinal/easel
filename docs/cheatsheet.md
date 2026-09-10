@@ -288,7 +288,7 @@ t.fontPath = "assets/fonts/我的字体.ttf";   // 不设就自动找系统中�
    → 在终端里跑那行命令                    ./solver --case debug/case-003.json
    → 用你最熟悉的方式定位（printf、断点、单步）
    → 改 solver.cpp
-   → ctest                                 确保没改坏别的
+   → ctest --test-dir build/default -C RelWithDebInfo   确保没改坏别的（-C for Windows MSVC）
    → 回到界面看                             app --open ... --solve
 ```
 

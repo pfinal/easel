@@ -98,7 +98,7 @@ All dependencies are statically linked through `FetchContent`: GLFW 3.4, Dear Im
 python3 scripts/vendor.py       # fetch the nine dependencies into vendor/, fully offline after that
 cmake --preset default          # or debug (ASan) / dx11 (Windows DirectX 11 backend)
 cmake --build --preset default
-ctest --preset default
+ctest --test-dir build/default --output-on-failure -C RelWithDebInfo  # -C required for multi-config generators (MSVC on Windows)
 ```
 
 ## Layout

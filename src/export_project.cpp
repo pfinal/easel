@@ -138,7 +138,8 @@ std::string howToBuild(const std::string& name, bool withEasel, bool hiddenCore)
         s += "    界面库 Easel 的源码在 easel/，它的七个第三方依赖的源码在 easel/vendor/，\n";
         s += "    所以整个过程不联网。cmake 会自己发现它们，不用加参数。\n\n";
         s += "三、跑测试\n";
-        s += "    cd build && ctest --output-on-failure\n\n";
+        s += "    cd build && ctest --output-on-failure -C Release\n\n";
+        s += "    （-C Release 是为了支持多配置生成器，单配置生成器会自动忽略这个参数）\n\n";
     }
     s += "编不过的时候：把命令行里的报错原样发出去求助，前三行最有用。\n";
     s += "程序跑起来画面不对：app --doctor，把输出发过来（里面有显卡、后端、字体、DPI）。\n";
