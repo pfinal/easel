@@ -26435,7 +26435,8 @@ inline void parse(int argc, char** argv) {
                     // 目录参数，不能出现在这张表里——否则那个路径会被当成位置参数，
                     // 而不是这几个 flag 的值（workbench/main.cpp 用 cli::args().str(...) 取）。
                     static const char* valueless[] = {"--solve",    "--doctor", "--quiet", "--help",
-                                                      "--debug",    "--edit",   "--edit-run", "--json"};
+                                                      "--debug",    "--edit",   "--edit-run", "--json",
+                                                      "--verbose"};
                     consumed = true;
                     for (const char* v : valueless)
                         if (prev == v) consumed = false;

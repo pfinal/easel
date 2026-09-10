@@ -43,6 +43,12 @@ struct WB {
     std::string          status = "先新建一个工程，或者打开一个已有的";
     char                 runArgs[192] = {0};
 
+    // 「工程说清楚自己在做什么」：每次操作（编译并运行 / 生成 exe / 导出源码）从
+    // 0.0s 重新起表，输出区里我们自己打的每一行都带 [ x.xs] 前缀；编译器/cmake/
+    // 作品自己的原样输出不加前缀。opClock 在 beginLog() 里重置。
+    Stopwatch            opClock;
+    bool                 verboseUI = false;   // 输出区上方的「详细」勾选，同步 internal::verbose()
+
     // 新建工程对话框
     char                     newName[128] = "MySketch";
     char                     newParent[512] = {0};
@@ -186,6 +192,77 @@ void addOut(const std::string& text, int kind, const std::string& file = {}, int
 
 void say(const std::string& s) { addOut(s, 3); }
 
+// 我们自己打的一行，带 [ x.xs] 前缀（相对 opClock 的秒数）——跟编译器/cmake/作品的
+// 原样输出（feed() 灌进来的那些，没有前缀）一眼能分清谁说的话。
+void sayTS(const std::string& s, int kind = 3) {
+    addOut(internal::formatStamp(wb().opClock.s()) + s, kind);
+}
+
+// 每次操作的完整输出追加写到 <工程>/.easel/last-build.log（覆盖式，只留最近一次）。
+// 没打开工程（没地方写）就什么都不做。写整个 w.out 一份份拼出来，简单可靠——
+// 一次操作最多几千行，拼一次字符串的开销可以忽略。
+void flushLog() {
+    WB& w = wb();
+    if (w.projectDir.empty()) return;
+    std::string text;
+    for (const OutLine& o : w.out) text += o.text + "\n";
+    writeTextU8(joinPath(w.projectDir, ".easel/last-build.log"), text);
+}
+
+// 每次操作开头都打一遍：清空输出区，起表，把启动横幅（不带时间戳，就是第 1 部分
+// 那几行）打在最上面。GUI 启动时也单独调一次（那时候 w.projectDir 可能还是空的，
+// 横幅会打「（没打开工程）」）。
+void beginLog() {
+    WB& w = wb();
+    w.out.clear();
+    w.errors = w.warnings = 0;
+    w.opClock.reset();
+    std::string b = internal::banner(w.projectDir);
+    size_t start = 0;
+    while (start < b.size()) {
+        size_t nl = b.find('\n', start);
+        std::string line = b.substr(start, nl == std::string::npos ? std::string::npos : nl - start);
+        if (!line.empty()) addOut(line, 3);
+        if (nl == std::string::npos) break;
+        start = nl + 1;
+    }
+}
+
+// --verbose / 「详细」勾选打开时，在操作开头多打一截排障细节：完整 PATH、子进程工作
+// 目录、easel-prebuilt.json / VERSION.json 的原文。候选路径的探测过程（resolvePaths /
+// 工具链）留给 --doctor --verbose——那边是 App::doctor() 唯一会去调 resolvePaths() 的
+// 地方，这里不重复一遍。GUI（sayTS）和无头命令（自己拼文本）共用这份内容。
+std::vector<std::string> verboseEnvLines(const std::string& dir) {
+    std::vector<std::string> out;
+    if (!internal::verbose()) return out;
+    const Toolchain& tc = toolchain();
+    out.push_back("详细：子进程工作目录 " + dir);
+    out.push_back("详细：子进程 PATH 注入 " + Proc::describe(tc.binDirs));
+    const char* pathEnv = std::getenv("PATH");
+    out.push_back(std::string("详细：PATH = ") + (pathEnv ? pathEnv : "(未设置)"));
+    if (!wb().easelDir.empty()) {
+        for (const char* rel : {"prebuilt/easel-prebuilt.json", "build/default/prebuilt/easel-prebuilt.json",
+                                "VERSION.json"}) {
+            std::string p = joinPath(wb().easelDir, rel);
+            std::string txt;
+            if (readTextU8(p, &txt)) out.push_back("详细：" + p + " = " + txt);
+        }
+    }
+    return out;
+}
+
+void logVerboseEnv(const std::string& dir) {
+    for (const std::string& l : verboseEnvLines(dir)) sayTS(l);
+}
+
+// 预编译 abi 不匹配时，cmake 自己会打一句 STATUS（new_project.cpp 生成的 CMakeLists
+// 里那句「改用源码编」），但那是 cmake 的原样输出，不带我们自己的「怎么办」。这里从
+// 一段 cmake 输出里认出这句话，补一行人话提示（D-新，第 4 部分）。
+void hintIfPrebuiltMismatch(const std::string& cmakeRaw) {
+    if (cmakeRaw.find("改用源码编") != std::string::npos)
+        sayTS("已改用源码编（约 3 分钟）。要恢复秒级编译，在目标平台重新生成预编译包", 2);
+}
+
 void feed(const std::string& chunk) {
     WB& w = wb();
     w.pending += chunk;
@@ -226,12 +303,30 @@ bool spawn(const std::vector<std::string>& argv, const std::string& cwd) {
     return true;
 }
 
+// 打「构建目录 ...（Ninja · RelWithDebInfo）」+「$ cmake ...」+（--verbose 才有的）
+// 环境细节。startConfigure()（平时编译）和 startPackage()（生成 exe 的 Release 配置）
+// 共用——两边参数不一样，但「说清楚在哪、编成什么样」这句台词是同一句。
+void logConfigureStart(const std::string& build, const char* buildType,
+                       const std::vector<std::string>& argv) {
+    WB& w = wb();
+    sayTS("构建目录 " + build + "（" + (toolchain().ninja.empty() ? "Unix Makefiles" : "Ninja") + " · " +
+          buildType + "）");
+    logVerboseEnv(w.projectDir);
+    sayTS("$ " + Proc::describe(argv));
+}
+
+bool cmakeMissing() {
+    if (!toolchain().cmake.empty()) return false;
+    sayTS("cmake 没找到 —— 装 CMake（brew install cmake / 工具箱里已自带）或把它加进 PATH", 1);
+    return true;
+}
+
 void startConfigure() {
     WB&                      w = wb();
-    std::vector<std::string> argv = configureArgs(w.projectDir, buildDir(w.projectDir),
-                                                  "RelWithDebInfo");
-    say("$ " + Proc::describe(argv));
-    say("第一次要把界面库编出来，几分钟。以后就只编你改的那几行了。");
+    std::string              build = buildDir(w.projectDir);
+    std::vector<std::string> argv = configureArgs(w.projectDir, build, "RelWithDebInfo");
+    logConfigureStart(build, "RelWithDebInfo", argv);
+    sayTS("第一次要把界面库编出来，几分钟。以后就只编你改的那几行了。");
     w.stage = Configuring;
     if (!spawn(argv, w.projectDir)) return;
     w.status = "配置中…";
@@ -243,7 +338,7 @@ void startBuild() {
     // 只编 app：solver 和 tests 是学生自己在命令行 / 编辑器里跑的，这里编它们只是白等
     std::vector<std::string> argv{tc.cmake.empty() ? "cmake" : tc.cmake, "--build",
                                   buildDir(w.projectDir), "--target", "app", "--parallel"};
-    say("$ " + Proc::describe(argv));
+    sayTS("$ " + Proc::describe(argv));
     w.stage = Building;
     if (!spawn(argv, w.projectDir)) return;
     w.status = "编译中…";
@@ -262,11 +357,11 @@ void startApp() {
         }
     }
     if (!existsU8(argv[0])) {
-        addOut("没找到编出来的程序：" + argv[0], 1);
+        sayTS("没找到编出来的程序：" + argv[0], 1);
         w.stage = Idle;
         return;
     }
-    say("▶ 运行 " + baseName(argv[0]) + "（作品的窗口会自己弹出来）");
+    sayTS("$ " + Proc::describe(argv) + "（作品的窗口会自己弹出来）");
     w.stage = Running;
     if (!spawn(argv, w.projectDir)) return;
     w.status = "运行中 —— 作品在另一个窗口里";
@@ -282,21 +377,43 @@ void compileAndRun() {
         say("上一个还在跑，先按「停止」。");
         return;
     }
-    w.out.clear();
+    beginLog();
     w.pending.clear();
-    w.errors = w.warnings = 0;
     w.wantPackage = false;
+    sayTS("工程 " + w.projectDir);
+    if (cmakeMissing()) { flushLog(); return; }
     if (existsU8(joinPath(buildDir(w.projectDir), "CMakeCache.txt")))
         startBuild();
     else
         startConfigure();
+    flushLog();
+}
+
+// 「打开日志目录」按钮：优先让 VS Code 打开日志文件本身（能直接看内容），
+// 没有 VS Code 就退到系统的「在文件管理器里定位这个文件」命令——file::folder()
+// 只会弹目录选择对话框，不是我们要的「带我去看那个文件」，不合适。
+void openLogFolder(const std::string& logPath) {
+    if (logPath.empty()) return;
+    if (openInEditor(logPath, 0, 0)) return;
+    std::vector<std::string> argv;
+#if defined(_WIN32)
+    argv = {"explorer.exe", "/select,", logPath};
+#elif defined(__APPLE__)
+    argv = {"open", "-R", logPath};
+#else
+    argv = {"xdg-open", fs::dirOf(logPath)};
+#endif
+    static Proc p;
+    std::string err;
+    p.start(argv, {}, &err);
 }
 
 // 「生成 exe」共用的部分：把 Release 版 exe + assets + data 拷成一个能双击的目录。
 // GUI 的「生成 exe」按钮（finishPackage()）和无头 `--package`（headless::cmdPackage）
 // 都调它——两边前面配置/编译的方式不同（一个是异步 Proc + pump()，一个是同步
 // runBlocking()），但编完之后「怎么收进 dist/」是同一套逻辑，不该抄两遍。
-std::string packageInto(const std::string& projectDir, std::string* err) {
+// outExeBytes 非空时回填交付出去那个可执行文件的大小——日志要打出来（第 2 部分）。
+std::string packageInto(const std::string& projectDir, std::string* err, long long* outExeBytes = nullptr) {
     std::string name = baseName(projectDir);
     std::string dest = joinPath(joinPath(projectDir, "dist"), name + "-release");
     std::string exe = exeIn(releaseDir(projectDir));
@@ -305,10 +422,11 @@ std::string packageInto(const std::string& projectDir, std::string* err) {
         return {};
     }
     makeDirsU8(dest);
-    int files = 0;
-    copyFileU8(exe, joinPath(dest, name + (exe.size() > 4 && exe.substr(exe.size() - 4) == ".exe"
-                                               ? ".exe"
-                                               : "")));
+    int         files = 0;
+    std::string destExe = joinPath(dest, name + (exe.size() > 4 && exe.substr(exe.size() - 4) == ".exe"
+                                                     ? ".exe"
+                                                     : ""));
+    copyFileU8(exe, destExe);
     for (const char* d : {"assets", "data"})
         if (existsU8(joinPath(projectDir, d)))
             copyTreeU8(joinPath(projectDir, d), joinPath(dest, d), &files);
@@ -318,6 +436,11 @@ std::string packageInto(const std::string& projectDir, std::string* err) {
                 "  点「更多信息」→「仍要运行」。这是没买代码签名证书的新程序的默认提示。\n\n"
                 "macOS 上如果提示「无法验证开发者」：右键点它 →「打开」→ 再点一次「打开」。\n\n"
                 "程序打不开或者画面不对，命令行里跑一下：" + name + " --doctor\n");
+    if (outExeBytes) {
+        long long sz = 0;
+        fileStamp(destExe, nullptr, &sz);
+        *outExeBytes = sz;
+    }
     return dest;
 }
 
@@ -325,28 +448,37 @@ std::string packageInto(const std::string& projectDir, std::string* err) {
 void finishPackage() {
     WB&         w = wb();
     std::string err;
-    std::string dest = packageInto(w.projectDir, &err);
+    long long   bytes = 0;
+    std::string dest = packageInto(w.projectDir, &err, &bytes);
     if (dest.empty()) {
-        addOut(err, 1);
+        sayTS("生成失败：" + err, 1);
+        flushLog();
         return;
     }
-    say("生成好了：" + dest);
+    sayTS("生成完成 → " + dest + "（" + formatBytes(bytes) + "）");
+    flushLog();
     if (App::instance()) App::instance()->toast("exe 生成好了");
 }
 
 void startPackage() {
-    WB&              w = wb();
+    WB& w = wb();
     if (w.projectDir.empty() || w.proc.running()) return;
-    w.out.clear();
-    w.errors = w.warnings = 0;
+    beginLog();
     w.wantPackage = true;
+    sayTS("工程 " + w.projectDir);
+    if (cmakeMissing()) {
+        w.wantPackage = false;
+        flushLog();
+        return;
+    }
     std::string              rel = releaseDir(w.projectDir);
     std::vector<std::string> argv = configureArgs(w.projectDir, rel, "Release");
-    say("$ " + Proc::describe(argv));
-    say("生成交付用的 exe：优化过、不带调试信息，比平时慢一点编。");
+    logConfigureStart(rel, "Release", argv);
+    sayTS("生成交付用的 exe：优化过、不带调试信息，比平时慢一点编。");
     w.stage = Configuring;
     if (!spawn(argv, w.projectDir)) return;
     w.status = "配置 Release…";
+    flushLog();
 }
 
 void pump() {
@@ -355,52 +487,69 @@ void pump() {
 
     std::string chunk;
     bool        alive = w.proc.pump(&chunk);
-    if (!chunk.empty()) feed(chunk);
+    if (!chunk.empty()) {
+        feed(chunk);
+        flushLog();
+    }
     if (alive) return;
     if (!w.pending.empty()) {
         feed("\n");
         w.pending.clear();
     }
 
-    int    code = w.proc.exitCode();
-    double secs = ImGui::GetTime() - w.startedAt;
-    char   buf[200];
+    int  code = w.proc.exitCode();
+    char buf[256];
 
     if (w.stage == Configuring) {
         if (code != 0) {
             std::snprintf(buf, sizeof buf, "配置失败（退出码 %d）。上面几行是原因。", code);
-            addOut(buf, 1);
+            sayTS(buf, 1);
+            cmakeMissing();
             w.status = "配置失败";
             w.stage = Idle;
+            w.wantPackage = false;
+            flushLog();
             return;
         }
+        sayTS("配置完成");
+        {
+            std::string cfgText;
+            for (const OutLine& o : w.out) cfgText += o.text + "\n";
+            hintIfPrebuiltMismatch(cfgText);
+        }
         if (w.wantPackage) {
-            const Toolchain& tc = toolchain();
-            std::string              rel = releaseDir(w.projectDir);
-            std::vector<std::string> argv{tc.cmake.empty() ? "cmake" : tc.cmake, "--build", rel,
-                                          "--config", "Release", "--target", "app", "--parallel"};
-            say("$ " + Proc::describe(argv));
+            const Toolchain&          tc = toolchain();
+            std::string               rel = releaseDir(w.projectDir);
+            std::vector<std::string>  argv{tc.cmake.empty() ? "cmake" : tc.cmake, "--build", rel,
+                                           "--config", "Release", "--target", "app", "--parallel"};
+            sayTS("$ " + Proc::describe(argv));
             w.stage = Building;
             spawn(argv, w.projectDir);
             w.status = "编译 Release…";
         } else {
             startBuild();
         }
+        flushLog();
         return;
     }
 
     if (w.stage == Building) {
         if (code != 0) {
-            std::snprintf(buf, sizeof buf, "编译失败：%d 个错误、%d 个警告（%.1f 秒）。点红色那行跳到代码里。",
-                          w.errors, w.warnings, secs);
-            addOut(buf, 1);
+            std::snprintf(buf, sizeof buf, "编译失败：%d 个错误、%d 个警告。点红色那行跳到代码里。",
+                          w.errors, w.warnings);
+            sayTS(buf, 1);
             w.status = "编译失败";
             w.stage = Idle;
+            w.wantPackage = false;
+            flushLog();
             return;
         }
-        std::snprintf(buf, sizeof buf, "编译成功（%.1f 秒%s）", secs,
-                      w.warnings ? "，有警告" : "");
-        say(buf);
+        std::string exe = w.wantPackage ? exeIn(releaseDir(w.projectDir)) : appExe(w.projectDir);
+        long long   sz = 0;
+        fileStamp(exe, nullptr, &sz);
+        std::snprintf(buf, sizeof buf, "编译完成 → %s（%s）%s", exe.c_str(), formatBytes(sz).c_str(),
+                      w.warnings ? ("，" + std::to_string(w.warnings) + " 个警告").c_str() : "");
+        sayTS(buf);
         if (w.wantPackage) {
             w.wantPackage = false;
             w.stage = Idle;
@@ -409,28 +558,29 @@ void pump() {
         } else {
             startApp();
         }
+        flushLog();
         return;
     }
 
     if (w.stage == Running) {
         if (code == 0) {
-            std::snprintf(buf, sizeof buf, "作品正常退出（跑了 %.0f 秒）", secs);
-            say(buf);
+            sayTS("作品退出，退出码 0");
         } else if (code == -2) {
-            say("已停止");
+            sayTS("已停止");
         } else if (code >= 128) {
             std::snprintf(buf, sizeof buf,
                           "作品被信号 %d 打断 —— 多半是越界或空指针。改完再跑一次；"
                           "要查具体哪一行，用 VS Code 的 F5 调试。",
                           code - 128);
-            addOut(buf, 1);
+            sayTS(buf, 1);
         } else {
             std::snprintf(buf, sizeof buf, "作品退出，退出码 %d", code);
-            addOut(buf, 2);
+            sayTS(buf, 2);
         }
         w.stage = Idle;
         w.status = "就绪";
     }
+    flushLog();
 }
 
 // ------------------------------------------------------------------ 无头命令行
@@ -529,11 +679,19 @@ bool resolveProject(const std::string& raw, std::string* dir, std::string* err) 
         return false;
     }
     if (toolchain().cmake.empty()) {
-        *err = "找不到 cmake：" + toolchain().note;
+        *err = "找不到 cmake：装 CMake（brew install cmake / 工具箱里已自带）或把它加进 PATH";
         return false;
     }
     *dir = d;
     return true;
+}
+
+// 每次无头操作的完整输出（横幅 + 带时间戳的每一步 + 子进程原样输出）写到
+// <工程>/.easel/last-build.log，覆盖式，只留最近一次——跟 GUI 的 flushLog() 是同一个
+// 文件、同一套格式，出问题时不用分是从工作台点的还是脚本跑的。
+void writeLog(const std::string& dir, const std::string& text) {
+    if (dir.empty()) return;
+    writeTextU8(joinPath(dir, ".easel/last-build.log"), text);
 }
 
 struct BuildOutcome {
@@ -541,7 +699,8 @@ struct BuildOutcome {
     double            seconds = 0;
     int               errors = 0, warnings = 0;
     std::vector<Diag> diagnostics;
-    std::string       raw;
+    std::string       raw;      // 纯子进程输出，--json 的 "raw" 字段用（不能被我们自己的行污染）
+    std::string       pretty;   // 横幅 + 带时间戳的每一步 + 原样输出，文本模式 / 日志文件用
 };
 
 // 配置（如果还没配置过）+ 编 app 目标。跟 GUI 的 startConfigure()/startBuild() 拼
@@ -552,33 +711,67 @@ BuildOutcome runBuild(const std::string& dir) {
     const Toolchain& tc = toolchain();
     std::string      build = buildDir(dir);
     std::string      raw;
+    std::string      pretty = banner(dir);
+    auto             stamp = [&](const std::string& t) { pretty += formatStamp(sw.s()) + t + "\n"; };
+    auto             rawOut = [&](const std::string& t) {
+        if (t.empty()) return;
+        pretty += t;
+        if (pretty.back() != '\n') pretty += "\n";
+    };
+
+    stamp("工程 " + dir);
 
     if (!existsU8(joinPath(build, "CMakeCache.txt"))) {
         std::vector<std::string> argv = configureArgs(dir, build, "RelWithDebInfo");
-        std::string               cfgRaw;
-        int                        cfgCode = -1;
-        bool ran = runBlocking(argv, dir, kTimeoutMs, &cfgRaw, &cfgCode, &tc.binDirs);
+        stamp("构建目录 " + build + "（" + (tc.ninja.empty() ? "Unix Makefiles" : "Ninja") +
+              " · RelWithDebInfo）");
+        for (const std::string& l : verboseEnvLines(dir)) stamp(l);
+        stamp("$ " + Proc::describe(argv));
+        std::string cfgRaw;
+        int         cfgCode = -1;
+        bool        ran = runBlocking(argv, dir, kTimeoutMs, &cfgRaw, &cfgCode, &tc.binDirs);
         raw += cfgRaw;
+        rawOut(cfgRaw);
         if (!ran || cfgCode != 0) {
+            stamp("配置失败（退出码 " + std::to_string(cfgCode) + "）。上面几行是原因。");
+            if (tc.cmake.empty())
+                stamp("cmake 没找到 —— 装 CMake（brew install cmake / 工具箱里已自带）或把它加进 PATH");
             out.raw = raw;
+            out.pretty = pretty;
             out.seconds = sw.s();
             out.diagnostics = collectDiagnostics(raw, dir, &out.errors, &out.warnings);
             out.ok = false;
             return out;
         }
+        stamp("配置完成");
+        if (cfgRaw.find("改用源码编") != std::string::npos)
+            stamp("已改用源码编（约 3 分钟）。要恢复秒级编译，在目标平台重新生成预编译包");
     }
 
     std::vector<std::string> argv{tc.cmake.empty() ? "cmake" : tc.cmake, "--build", build,
                                   "--target", "app", "--parallel"};
+    stamp("$ " + Proc::describe(argv));
     std::string buildRaw;
     int         buildCode = -1;
     runBlocking(argv, dir, kTimeoutMs, &buildRaw, &buildCode, &tc.binDirs);
     raw += buildRaw;
+    rawOut(buildRaw);
 
     out.raw = raw;
     out.seconds = sw.s();
     out.diagnostics = collectDiagnostics(raw, dir, &out.errors, &out.warnings);
     out.ok = (buildCode == 0);
+    if (out.ok) {
+        std::string exe = appExe(dir);
+        long long   sz = 0;
+        fileStamp(exe, nullptr, &sz);
+        stamp("编译完成 → " + exe + "（" + formatBytes(sz) + "）" +
+              (out.warnings ? "，" + std::to_string(out.warnings) + " 个警告" : std::string()));
+    } else {
+        stamp("编译失败：" + std::to_string(out.errors) + " 个错误、" + std::to_string(out.warnings) +
+              " 个警告。用 --json 拿结构化诊断。");
+    }
+    out.pretty = pretty;
     return out;
 }
 
@@ -595,21 +788,6 @@ json buildOutcomeJson(const std::string& action, const std::string& dir, const B
     j["diagnostics"] = arr;
     j["raw"] = b.raw;
     return j;
-}
-
-void printRaw(const std::string& raw) {
-    if (raw.empty()) return;
-    std::fwrite(raw.data(), 1, raw.size(), stdout);
-    if (raw.back() != '\n') std::fputc('\n', stdout);
-}
-
-std::string buildSummary(const BuildOutcome& b) {
-    char buf[128];
-    if (b.ok)
-        std::snprintf(buf, sizeof buf, "编译成功（%.1f 秒）", b.seconds);
-    else
-        std::snprintf(buf, sizeof buf, "编译失败：%d 个错误、%d 个警告", b.errors, b.warnings);
-    return buf;
 }
 
 // 找不到工程 / 没有 .easel / 没有 cmake：三种情况统一走这一条出口。
@@ -630,11 +808,11 @@ int cmdBuild(const std::string& raw, bool jsonOut) {
     std::string dir, err;
     if (!resolveProject(raw, &dir, &err)) return failEarly(err, jsonOut);
     BuildOutcome b = runBuild(dir);
+    writeLog(dir, b.pretty);
     if (jsonOut) {
         std::cout << buildOutcomeJson("build", dir, b).dump(2) << std::endl;
     } else {
-        printRaw(b.raw);
-        std::printf("%s\n", buildSummary(b).c_str());
+        std::fwrite(b.pretty.data(), 1, b.pretty.size(), stdout);
     }
     return b.ok ? 0 : 1;
 }
@@ -647,17 +825,20 @@ int cmdRun(const std::string& raw, bool jsonOut) {
     if (!resolveProject(raw, &dir, &err)) return failEarly(err, jsonOut);
     BuildOutcome b = runBuild(dir);
     if (!b.ok) {
+        writeLog(dir, b.pretty);
         if (jsonOut) {
             std::cout << buildOutcomeJson("run", dir, b).dump(2) << std::endl;
         } else {
-            printRaw(b.raw);
-            std::printf("%s\n", buildSummary(b).c_str());
+            std::fwrite(b.pretty.data(), 1, b.pretty.size(), stdout);
         }
         return 1;
     }
 
     std::string exe = appExe(dir);
-    if (!existsU8(exe)) return failEarly("没找到编出来的程序：" + exe, jsonOut);
+    if (!existsU8(exe)) {
+        writeLog(dir, b.pretty);
+        return failEarly("没找到编出来的程序：" + exe, jsonOut);
+    }
 
     std::vector<std::string> argv{exe};
     std::string               args = cli::args().str("args"), cur;
@@ -669,10 +850,29 @@ int cmdRun(const std::string& raw, bool jsonOut) {
             cur.push_back(args[i]);
         }
     }
+
+    std::string pretty = b.pretty;
+    double      t0 = b.seconds;
+    pretty += formatStamp(t0) + "$ " + Proc::describe(argv) + "\n";
+    Stopwatch   runSw;
     std::string appRaw;
     int         appCode = -1;
     runBlocking(argv, dir, kTimeoutMs, &appRaw, &appCode, &toolchain().binDirs);
+    if (!appRaw.empty()) {
+        pretty += appRaw;
+        if (pretty.back() != '\n') pretty += "\n";
+    }
+    double t1 = t0 + runSw.s();
+    if (appCode == 0) {
+        pretty += formatStamp(t1) + "作品退出，退出码 0\n";
+    } else if (appCode >= 128) {
+        pretty += formatStamp(t1) + "作品被信号 " + std::to_string(appCode - 128) +
+                  " 打断 —— 多半是越界或空指针。用 --json 拿结构化诊断，或者用 VS Code 的 F5 调试。\n";
+    } else {
+        pretty += formatStamp(t1) + "作品退出，退出码 " + std::to_string(appCode) + "\n";
+    }
     bool ok = (appCode == 0);
+    writeLog(dir, pretty);
 
     if (jsonOut) {
         json j = buildOutcomeJson("run", dir, b);
@@ -681,10 +881,7 @@ int cmdRun(const std::string& raw, bool jsonOut) {
         j["stdout"] = appRaw;
         std::cout << j.dump(2) << std::endl;
     } else {
-        printRaw(b.raw);
-        std::printf("%s\n", buildSummary(b).c_str());
-        printRaw(appRaw);
-        std::printf("作品退出，退出码 %d\n", appCode);
+        std::fwrite(pretty.data(), 1, pretty.size(), stdout);
     }
     return appCode;
 }
@@ -698,19 +895,43 @@ int cmdPackage(const std::string& raw, bool jsonOut) {
     const Toolchain& tc = toolchain();
     std::string      rel = releaseDir(dir);
     std::string      raw2, cfgRaw, buildRaw;
-    int              cfgCode = existsU8(joinPath(rel, "CMakeCache.txt")) ? 0 : -1;
+    std::string      pretty = banner(dir);
+    auto             stamp = [&](const std::string& t) { pretty += formatStamp(sw.s()) + t + "\n"; };
+    auto             rawOut = [&](const std::string& t) {
+        if (t.empty()) return;
+        pretty += t;
+        if (pretty.back() != '\n') pretty += "\n";
+    };
+
+    stamp("工程 " + dir);
+    int cfgCode = existsU8(joinPath(rel, "CMakeCache.txt")) ? 0 : -1;
     if (cfgCode != 0) {
         std::vector<std::string> argv = configureArgs(dir, rel, "Release");
+        stamp("构建目录 " + rel + "（" + (tc.ninja.empty() ? "Unix Makefiles" : "Ninja") + " · Release）");
+        for (const std::string& l : verboseEnvLines(dir)) stamp(l);
+        stamp("$ " + Proc::describe(argv));
         runBlocking(argv, dir, kTimeoutMs, &cfgRaw, &cfgCode, &tc.binDirs);
         raw2 += cfgRaw;
+        rawOut(cfgRaw);
+        if (cfgCode == 0) {
+            stamp("配置完成");
+            if (cfgRaw.find("改用源码编") != std::string::npos)
+                stamp("已改用源码编（约 3 分钟）。要恢复秒级编译，在目标平台重新生成预编译包");
+        } else {
+            stamp("配置失败（退出码 " + std::to_string(cfgCode) + "）。上面几行是原因。");
+            if (tc.cmake.empty())
+                stamp("cmake 没找到 —— 装 CMake（brew install cmake / 工具箱里已自带）或把它加进 PATH");
+        }
     }
 
     int buildCode = -1;
     if (cfgCode == 0) {
         std::vector<std::string> argv{tc.cmake.empty() ? "cmake" : tc.cmake, "--build", rel,
                                       "--config", "Release", "--target", "app", "--parallel"};
+        stamp("$ " + Proc::describe(argv));
         runBlocking(argv, dir, kTimeoutMs, &buildRaw, &buildCode, &tc.binDirs);
         raw2 += buildRaw;
+        rawOut(buildRaw);
     }
 
     BuildOutcome b;
@@ -719,11 +940,26 @@ int cmdPackage(const std::string& raw, bool jsonOut) {
     b.diagnostics = collectDiagnostics(raw2, dir, &b.errors, &b.warnings);
     b.ok = (cfgCode == 0 && buildCode == 0);
 
+    if (b.ok)
+        stamp("编译完成" +
+              (b.warnings ? "，" + std::to_string(b.warnings) + " 个警告" : std::string()));
+    else if (cfgCode == 0)
+        stamp("编译失败：" + std::to_string(b.errors) + " 个错误、" + std::to_string(b.warnings) +
+              " 个警告。用 --json 拿结构化诊断。");
+
     std::string output, packErr;
+    long long   bytes = 0;
     if (b.ok) {
-        output = packageInto(dir, &packErr);
+        output = packageInto(dir, &packErr, &bytes);
         if (output.empty()) b.ok = false;
     }
+    if (!output.empty())
+        stamp("生成完成 → " + output + "（" + formatBytes(bytes) + "）");
+    else if (!packErr.empty())
+        stamp(packErr);
+
+    b.pretty = pretty;
+    writeLog(dir, pretty);
 
     if (jsonOut) {
         json j = buildOutcomeJson("package", dir, b);
@@ -731,10 +967,7 @@ int cmdPackage(const std::string& raw, bool jsonOut) {
         if (!packErr.empty()) j["error"] = packErr;
         std::cout << j.dump(2) << std::endl;
     } else {
-        printRaw(b.raw);
-        std::printf("%s\n", buildSummary(b).c_str());
-        if (!output.empty()) std::printf("生成好了：%s\n", output.c_str());
-        else if (!packErr.empty()) std::printf("%s\n", packErr.c_str());
+        std::fwrite(pretty.data(), 1, pretty.size(), stdout);
     }
     return b.ok ? 0 : 1;
 }
@@ -750,7 +983,25 @@ int cmdExport(const std::string& raw, bool jsonOut) {
     o.easelDir = wb().easelDir;
     o.name = baseName(dir);
     o.outDir = cli::args().str("out");
+    std::string outDirShown =
+        o.outDir.empty() ? joinPath(joinPath(dir, "dist"), o.name) : absPath(o.outDir);
+
+    std::string pretty = banner(dir);
+    Stopwatch   sw;
+    auto        stamp = [&](const std::string& t) { pretty += formatStamp(sw.s()) + t + "\n"; };
+    stamp("源工程 " + dir);
+    stamp("导出到 " + outDirShown);
+    for (const std::string& l : verboseEnvLines(dir)) stamp(l);
+
     ExportReport rep = exportProject(o);
+    for (const std::string& c : rep.checks) pretty += c + "\n";
+    if (rep.ok)
+        stamp("导出完成 → " + rep.outDir + "（" + std::to_string(rep.files) + " 个文件，" +
+              formatBytes(rep.bytes) + "）");
+    else
+        stamp("导出失败：" + rep.error);
+
+    writeLog(dir, pretty);
 
     if (jsonOut) {
         json j;
@@ -766,11 +1017,7 @@ int cmdExport(const std::string& raw, bool jsonOut) {
         if (!rep.ok) j["error"] = rep.error;
         std::cout << j.dump(2) << std::endl;
     } else {
-        for (const std::string& c : rep.checks) std::printf("%s\n", c.c_str());
-        if (rep.ok)
-            std::printf("导出好了：%s\n", rep.outDir.c_str());
-        else
-            std::printf("导出失败：%s\n", rep.error.c_str());
+        std::fwrite(pretty.data(), 1, pretty.size(), stdout);
     }
     return rep.ok ? 0 : 1;
 }
@@ -925,12 +1172,21 @@ void draw(const Rect& r, const Theme& th, float dpi) {
         o.projectDir = w.projectDir;
         o.easelDir = w.easelDir;
         o.name = baseName(w.projectDir);
-        say("正在导出完整源码…（几十 MB，界面会卡一下）");
+        std::string outDirShown = joinPath(joinPath(w.projectDir, "dist"), o.name);
+        beginLog();
+        sayTS("源工程 " + w.projectDir);
+        sayTS("导出到 " + outDirShown);
+        logVerboseEnv(w.projectDir);
+        sayTS("正在导出完整源码…（几十 MB，界面会卡一下）");
         ExportReport rep = exportProject(o);
         for (const std::string& l : rep.checks)
             addOut(l, l.rfind("[×]", 0) == 0 ? 1 : l.rfind("[!]", 0) == 0 ? 2 : 0);
-        if (rep.ok) say("导出好了：" + rep.outDir);
-        else addOut("导出失败：" + rep.error, 1);
+        if (rep.ok)
+            sayTS("导出完成 → " + rep.outDir + "（" + std::to_string(rep.files) + " 个文件，" +
+                  formatBytes(rep.bytes) + "）");
+        else
+            sayTS("导出失败：" + rep.error, 1);
+        flushLog();
     }
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("导出一个完整工程：不装 Easel、不联网也能从头编出来");
@@ -947,6 +1203,11 @@ void draw(const Rect& r, const Theme& th, float dpi) {
     ImGui::Separator();
 
     // ---- 输出 ----
+    if (ImGui::Checkbox("详细", &w.verboseUI)) internal::setVerbose(w.verboseUI);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("勾上之后下一次操作会多打一截排障细节：完整 PATH、子进程工作目录、\n"
+                          "easel-prebuilt.json / VERSION.json 的原文。命令行等价于 --verbose");
+    ImGui::SameLine();
     ImGui::TextUnformatted("输出");
     ImGui::SameLine();
     if (ImGui::SmallButton("清空")) {
@@ -959,6 +1220,11 @@ void draw(const Rect& r, const Theme& th, float dpi) {
         for (const OutLine& o : w.out) all += o.text + "\n";
         ImGui::SetClipboardText(all.c_str());
     }
+    ImGui::SameLine();
+    ImGui::BeginDisabled(w.projectDir.empty());
+    if (ImGui::SmallButton("打开日志目录")) openLogFolder(joinPath(w.projectDir, ".easel/last-build.log"));
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("这次操作的完整输出存在 .easel/last-build.log 里");
+    ImGui::EndDisabled();
     if (w.errors || w.warnings) {
         ImGui::SameLine();
         ImGui::TextColored(w.errors ? ImVec4(th.bad.r, th.bad.g, th.bad.b, 1)
@@ -1019,6 +1285,7 @@ int main(int argc, char** argv) {
        .idleThrottle(true)            // 界面静止的时候（没人点、也没有子进程在编译/跑）降到 10 帧省电
        .busyWhen([]{ return wb().proc.running(); });   // 编译/运行中也保持满帧
     app.statusBar(true);
+    internal::setVerbose(cli::args().has("verbose"));   // --verbose；GUI 的「详细」勾选也改它
 
     WB& w = wb();
 #if defined(EASEL_SOURCE_DIR)
@@ -1080,6 +1347,12 @@ int main(int argc, char** argv) {
     if (cli::args().has("export")) return headless::cmdExport(cli::args().str("export"), jsonOut);
 
     if (!cli::args().at(0).empty()) useProject(absPath(cli::args().at(0)));
+
+    // 工作台一启动就打启动横幅，在输出区最上面——查问题时第一眼就看得到用的是哪个
+    // Easel、哪份预编译、编译器/cmake/ninja 在哪儿（D-新，第 1 部分）。
+    w.verboseUI = internal::verbose();
+    beginLog();
+    w.status = w.projectDir.empty() ? "先新建一个工程，或者打开一个已有的" : "工程：" + baseName(w.projectDir);
 
     app.onFrame([](double) { pump(); });
     app.onWindow([&app](const Rect& r) { draw(r, app.theme(), (float)app.dpiScale()); });

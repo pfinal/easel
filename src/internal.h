@@ -228,9 +228,33 @@ struct Toolchain {
     std::string note;     // 找不到时的下一步怎么办
     // 起子进程前要临时插进 PATH 的目录（学生双击 exe 时 PATH 里没有工具箱）
     std::vector<std::string> binDirs;
+    // 探测过程记下来的一行行说明（试过哪些候选、为什么没选中）——不管 verbose() 开没开
+    // 都会记，只有打印的时候才看 verbose()（D-新：懒初始化只跑一次，重新探测代价不小，
+    // 不如「一直记、按需打印」）。
+    std::vector<std::string> diag;
 };
 const Toolchain& toolchain(bool refresh = false);
 std::string      toolchainVersion();     // 阻塞最多 2 秒，只在自检里调
+
+// ---------------------------------------------------------------- 启动横幅
+// 「这是哪个 Easel、哪份预编译、编到哪去了」，一眼说清楚——工作台启动时打在输出区
+// 最上面，--doctor 里也有，每次 build/run/package/export 的日志（包括写进
+// .easel/last-build.log 的那份）开头都带上它。projectDir 留空 = 打「（没打开工程）」。
+// 实现在 app.cpp（要用到 EASEL_GIT_SHA / EASEL_ABI / EASEL_BUILT_WITH 这几个只有
+// 编译 easel 库时才看得见的宏）。
+std::string banner(const std::string& projectDir = {});
+// 字节数 -> "1.2 MB" 这种人话；秒数 -> "[  2.1s] " 这种右对齐的时间戳前缀。
+// 编译产物大小、每一步日志的时间戳都靠它们，workbench 和 doctor() 都用得到。
+std::string formatBytes(long long bytes);
+std::string formatStamp(double seconds);
+
+// ---------------------------------------------------------------- 详细模式
+// --verbose（命令行）或工作台输出区上方的「详细」勾选。默认关：编译日志已经够看了，
+// 平时不需要 PATH、候选路径这些排障细节；出问题时打开它，doctor() 和每次操作的日志
+// 都会多打一截。resolvePaths() / toolchain() 的候选探测过程不管这个开关开没开都会
+// 记下来（见上面 Toolchain::diag、editorPathsDiag()），这个开关只决定「打不打印」。
+bool verbose();
+void setVerbose(bool on);
 // 起一个进程，等它结束再返回（超时就杀掉）。给自检这种一次性的活用，别在每帧里调。
 bool runBlocking(const std::vector<std::string>& argv, const std::string& workDir, int timeoutMs,
                  std::string* out, int* exitCode,
@@ -256,6 +280,10 @@ struct EditorPaths {
 // resolvePaths() 用它筛 projectDir 候选；测试直接调它验证判定本身。
 bool               looksLikeProject(const std::string& dir);
 const EditorPaths& editorPaths();
+// resolvePaths() 试过的候选目录，一行一条（projectDir 和 easelDir 两段都在里面），
+// verbose 模式下 doctor() 打出来。resolvePaths() 只跑一次，但这份记录跟着一起存好，
+// 之后随时能打（不用重新探测一遍）。
+const std::vector<std::string>& editorPathsDiag();
 void               setEditorFile(const std::string& path);
 void               drawEditor(App& app, const Rect& r, bool* open);
 void               editorRun();          // F5：保存 → 编译 → 运行

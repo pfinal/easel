@@ -5,6 +5,7 @@
 #include <GLFW/glfw3.h>
 #include <imgui_impl_glfw.h>
 
+#include <cctype>
 #include <chrono>
 #include <thread>
 
@@ -16,9 +17,21 @@
 namespace easel {
 
 #if defined(_WIN32)
-// GUI 子系统的程序没有控制台；从命令行跑 --doctor / --export 时把输出接回父终端。
-// 双击启动时没有父控制台，AttachConsole 失败，什么都不做（也不弹黑框）。
+// GUI 子系统的程序（WIN32_EXECUTABLE TRUE）没有控制台；从命令行跑 --doctor / --export
+// 时想把输出接回父终端，才需要这一步。但有两种情况*不*该去动 stdout：
+//   1. 已经被重定向到文件/管道（`easel --doctor > out.txt`，或者 CI 里
+//      `app.exe --doctor > doctor.txt 2>&1`）——这时 GetStdHandle(STD_OUTPUT_HANDLE)
+//      有效、GetFileType 不是 FILE_TYPE_UNKNOWN，stdout 本来就能写，freopen 反而会
+//      把它从文件改接到 CONOUT$，重定向就丢了。
+//   2. 压根没有父控制台（双击启动）：AttachConsole 会失败，什么都不做，不弹黑框。
+// 只有 stdout 无效（没有句柄，也没有被重定向）且 AttachConsole 成功时，才 freopen 到
+// CONOUT$ —— 也就是「从命令行/终端跑起来，但因为是 WINDOWS 子系统而没继承到控制台」这一种。
 static void attachParentConsole() {
+    HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (h != NULL && h != INVALID_HANDLE_VALUE && GetFileType(h) != FILE_TYPE_UNKNOWN) {
+        // 已经有效（重定向到文件/管道，或者继承了控制台）：什么都不做，保住它。
+        return;
+    }
     if (!AttachConsole(ATTACH_PARENT_PROCESS)) return;
     FILE* f = nullptr;
 #if defined(_MSC_VER)
@@ -264,16 +277,123 @@ double      App::dpiScale() const { return p_->dpi; }
 const char* App::backendName() const { return internal::backend::name(); }
 void        App::quit() { p_->running = false; }
 
+namespace internal {
+
+namespace {
+
+// "cmake version 3.31.6" -> "3.31.6"；ninja 的 --version 本来就是裸版本号，原样穿过。
+std::string firstVersionNumber(const std::string& line) {
+    size_t i = 0;
+    while (i < line.size() && !std::isdigit((unsigned char)line[i])) ++i;
+    if (i >= line.size()) return line;
+    size_t j = i;
+    while (j < line.size() && (std::isdigit((unsigned char)line[j]) || line[j] == '.')) ++j;
+    return line.substr(i, j - i);
+}
+
+// 起 <exe> --version，最多等 2 秒，只要第一行的版本号。拿不到就返回空——
+// 调用方这时候只打路径，不瞎编版本号。
+std::string quickVersion(const std::string& exe) {
+    if (exe.empty()) return {};
+    std::string out;
+    int         code = -1;
+    if (!runBlocking({exe, "--version"}, {}, 2000, &out, &code)) return {};
+    size_t nl = out.find('\n');
+    return firstVersionNumber(nl == std::string::npos ? out : out.substr(0, nl));
+}
+
+// 中文标签按显示宽度（CJK=2，其它=1）对齐到第 10 列，banner 那几行不会参差不齐。
+int displayWidth(const std::string& s) {
+    int w = 0;
+    for (size_t i = 0; i < s.size();) {
+        unsigned char c = (unsigned char)s[i];
+        int len = (c & 0x80) == 0 ? 1 : (c & 0xE0) == 0xC0 ? 2 : (c & 0xF0) == 0xE0 ? 3 : (c & 0xF8) == 0xF0 ? 4 : 1;
+        w += len == 1 ? 1 : 2;
+        i += (size_t)len;
+    }
+    return w;
+}
+std::string bannerLine(const std::string& label, const std::string& value) {
+    std::string out = "  " + label;
+    int         w = displayWidth(label);
+    out.append((size_t)(w < 10 ? 10 - w : 1), ' ');   // 至少留一个空格，标签比 10 列还宽也不会粘住
+    return out + value + "\n";
+}
+
+// <easelDir>/prebuilt/ 或（开发机本地）<easelDir>/build/default/prebuilt/：
+// 哪个先探测到就是哪个，跟 src/new_project.cpp 生成的 CMakeLists 里 _easel_prebuilt_root
+// 的判定顺序一模一样，别让工作台自己说的和实际配置工程时用的对不上。
+std::string prebuiltRoot(const std::string& easelDir) {
+    if (easelDir.empty()) return {};
+    if (existsU8(joinPath(easelDir, "prebuilt/lib/cmake/easel/easelConfig.cmake")))
+        return joinPath(easelDir, "prebuilt");
+    if (existsU8(joinPath(easelDir, "build/default/prebuilt/lib/cmake/easel/easelConfig.cmake")))
+        return joinPath(easelDir, "build/default/prebuilt");
+    return {};
+}
+
+}  // namespace
+
+// 启动横幅：见 internal.h 的注释。GUI 启动、--doctor、每次 build/run/package/export
+// 的日志开头都打它——出问题时先看这几行，不用去猜用的是哪个 Easel、哪份预编译。
+std::string banner(const std::string& projectDir) {
+    std::string o;
+    o += "Easel " EASEL_VERSION;
+#if defined(EASEL_GIT_SHA)
+    o += std::string(" · 提交 ") + EASEL_GIT_SHA;
+#endif
+#if defined(EASEL_ABI)
+    o += std::string(" · abi ") + EASEL_ABI;
+#endif
+#if defined(EASEL_BUILT_WITH)
+    o += std::string(" · ") + EASEL_BUILT_WITH;
+#endif
+    o += "\n";
+
+    o += bannerLine("程序", exePath());
+    const EditorPaths& ep = editorPaths();
+    o += bannerLine("Easel 源码", ep.easelDir.empty() ? "(没找到)" : ep.easelDir);
+
+    std::string root = prebuiltRoot(ep.easelDir);
+    if (ep.easelDir.empty()) {
+        o += bannerLine("预编译", "(不知道 Easel 源码在哪，没法找)");
+    } else if (root.empty()) {
+        o += bannerLine("预编译", joinPath(ep.easelDir, "prebuilt") + "（没有预编译包，新建的工程会从源码编）");
+    } else {
+        json        pb = fs::loadJson(joinPath(root, "easel-prebuilt.json"));
+        std::string pbAbi = pb.value("abi", std::string());
+        std::string curAbi =
+#if defined(EASEL_ABI)
+            EASEL_ABI;
+#else
+            std::string("unknown");
+#endif
+        std::string status = pbAbi.empty() ? "读不出 abi，没法比对"
+                             : (pbAbi == curAbi ? "匹配" : "不匹配（工程会走源码编）");
+        o += bannerLine("预编译", root + "（abi " + (pbAbi.empty() ? "?" : pbAbi) + "，" + status + "）");
+    }
+
+    const Toolchain& tc = toolchain();
+    o += bannerLine("编译器", tc.cxx.empty() ? "没找到 —— " + tc.note : tc.cxx + "（" + tc.source + "）");
+    {
+        std::string v = quickVersion(tc.cmake);
+        o += bannerLine("cmake", tc.cmake.empty() ? "没找到 —— 装 CMake（brew install cmake / 工具箱里已自带）或把它加进 PATH"
+                                                  : tc.cmake + (v.empty() ? "" : " " + v));
+    }
+    {
+        std::string v = quickVersion(tc.ninja);
+        o += bannerLine("ninja", tc.ninja.empty() ? "没找到（配置时会退回 Makefiles）" : tc.ninja + (v.empty() ? "" : " " + v));
+    }
+    o += bannerLine("工程目录", projectDir.empty() ? "（没打开工程）" : projectDir);
+    return o;
+}
+
+}  // namespace internal
+
 std::string App::doctor() const {
     std::ostringstream o;
+    o << internal::banner(internal::editorPaths().projectDir);
     o << doctorCore();
-#if defined(EASEL_GIT_SHA) && defined(EASEL_BUILT_WITH)
-    o << "Easel " << EASEL_VERSION << " · 提交 " << EASEL_GIT_SHA
-#if defined(EASEL_ABI)
-      << " · abi " << EASEL_ABI
-#endif
-      << " · " << EASEL_BUILT_WITH << "\n";
-#endif
     o << "  ---- 图形 ----\n";
     o << "  渲染后端    : " << internal::backend::name() << "\n";
     o << "  显卡        : " << internal::backend::gpu() << "\n";
@@ -307,6 +427,23 @@ std::string App::doctor() const {
     o << "  cout/printf : " << (internal::captureActive() ? "已接到日志窗"
                                                        : "未接管（--doctor 模式下本来就不接）")
       << "\n";
+    if (internal::verbose()) {
+        o << "  ---- 详细（--verbose）----\n";
+        const char* pathEnv = std::getenv("PATH");
+        o << "  PATH        : " << (pathEnv ? pathEnv : "(未设置)") << "\n";
+        o << "  子进程 PATH 注入：" << internal::Proc::describe(tc.binDirs) << "\n";
+        o << "  resolvePaths 候选（projectDir / easelDir）：\n";
+        for (const std::string& l : internal::editorPathsDiag()) o << "    " << l << "\n";
+        o << "  工具链探测（编译器 / cmake / ninja）：\n";
+        for (const std::string& l : tc.diag) o << "    " << l << "\n";
+        for (const char* rel : {"prebuilt/easel-prebuilt.json", "build/default/prebuilt/easel-prebuilt.json",
+                                "VERSION.json"}) {
+            if (ep.easelDir.empty()) break;
+            std::string p = internal::joinPath(ep.easelDir, rel);
+            std::string txt;
+            if (internal::readTextU8(p, &txt)) o << "  " << p << "：\n" << txt << "\n";
+        }
+    }
     return o.str();
 }
 
@@ -488,6 +625,24 @@ int App::run() {
     }
 
     if (!internal::backend::init(d.title.c_str(), d.w, d.h, !doctorOnly, &d.win)) {
+        if (doctorOnly) {
+            // 自检工具在没有显卡的机器上更要能用（CI 的无头 runner 就是这样：没有 GPU，
+            // glfwInit / 建窗口本来就会失败）——图形后端起不来时仍然把不依赖显卡的 core
+            // 部分打出来，返回 0，而不是让 --doctor 本身也“挂掉”。
+            std::string reason;
+            for (auto it = internal::shared().log.rbegin(); it != internal::shared().log.rend(); ++it) {
+                if (it->level == LogLevel::Error) { reason = it->msg; break; }
+            }
+            std::ostringstream o;
+            o << internal::banner(internal::editorPaths().projectDir);
+            o << doctorCore();
+            o << "  ---- 图形 ----\n";
+            o << "  图形后端起不来：" << (reason.empty() ? "原因不明（backend::init 返回 false）" : reason)
+              << "\n";
+            std::printf("%s", o.str().c_str());
+            std::fflush(stdout);
+            return 0;
+        }
         EASEL_ERROR("Easel 起不来。用 --doctor 看看环境。");
         return 1;
     }

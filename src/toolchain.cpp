@@ -77,8 +77,12 @@ const char* const kCxxNames[] = {
 
 Toolchain g_tc;
 bool      g_found = false;
+bool      g_verbose = false;
 
 }  // namespace
+
+bool verbose() { return g_verbose; }
+void setVerbose(bool on) { g_verbose = on; }
 
 // ---------------------------------------------------------------- 路径小工具
 std::string joinPath(const std::string& a, const std::string& b) {
@@ -139,42 +143,79 @@ std::string exePath() {
 
 std::string exeDir() { return fs::dirOf(exePath()); }
 
+// "1234567" -> "1.2 MB"。产物大小、导出体积都用这个，别让学生自己拿字节数除以 1e6。
+std::string formatBytes(long long bytes) {
+    char buf[64];
+    if (bytes < 1024) {
+        std::snprintf(buf, sizeof buf, "%lld B", bytes);
+    } else if (bytes < 1024LL * 1024) {
+        std::snprintf(buf, sizeof buf, "%.1f KB", bytes / 1024.0);
+    } else if (bytes < 1024LL * 1024 * 1024) {
+        std::snprintf(buf, sizeof buf, "%.1f MB", bytes / (1024.0 * 1024.0));
+    } else {
+        std::snprintf(buf, sizeof buf, "%.1f GB", bytes / (1024.0 * 1024.0 * 1024.0));
+    }
+    return buf;
+}
+
+// "[  2.1s] " —— 我们自己打的每一行都带这个前缀，跟编译器/cmake 的原样输出区分开。
+// %5.1f 右对齐：0~99.9 秒之间都对得齐，够一次编译用了。
+std::string formatStamp(double seconds) {
+    char buf[32];
+    std::snprintf(buf, sizeof buf, "[%5.1fs] ", seconds);
+    return buf;
+}
+
 // ---------------------------------------------------------------- 找编译器
 namespace {
 
 // 找 cxx。找到就顺便记下工具箱根目录（cmake / ninja 也在那儿）。
+// 每一步试过什么、为什么没选中都记进 g_tc.diag——不管 verbose() 开没开都记，反正
+// 就几十个 push_back，比起分叉一份「只在 verbose 时才探测」的逻辑简单得多，也不会
+// 因为 toolchain() 懒初始化只跑一次而漏记。
 void findCxx() {
-    if (const char* env = std::getenv("EASEL_CXX")) {
-        if (*env && isFile(env)) {
+    const char* env = std::getenv("EASEL_CXX");
+    g_tc.diag.push_back(std::string("环境变量 EASEL_CXX = ") + (env && *env ? env : "(未设置)"));
+    if (env && *env) {
+        if (isFile(env)) {
             g_tc.cxx = env;
             g_tc.source = "环境变量 EASEL_CXX";
+            g_tc.diag.push_back("  -> 存在，采用");
             return;
         }
+        g_tc.diag.push_back("  -> 文件不存在，跳过");
     }
 
     // 绿色工具箱：从 exe 往上翻几层（学生双击 exe 时 PATH 里没有它，这一步就是为这个写的）
     std::string dir = exeDir();
     for (int up = 0; up < 6 && !dir.empty(); ++up) {
         for (const char* kit : {"w64devkit", "mingw64", "mingw32"}) {
-            std::string cand = lookIn({joinPath(joinPath(dir, kit), "bin")}, kCxxNames);
+            std::string kitBin = joinPath(joinPath(dir, kit), "bin");
+            std::string cand = lookIn({kitBin}, kCxxNames);
             if (!cand.empty()) {
                 g_tc.cxx = cand;
                 g_tc.kit = dir;
                 g_tc.source = "工具箱（" + dir + "）";
+                g_tc.diag.push_back("工具箱候选 " + kitBin + " -> 找到 " + cand + "，采用");
                 return;
             }
+            g_tc.diag.push_back("工具箱候选 " + kitBin + " -> 没有");
         }
         std::string parent = fs::dirOf(dir);
         if (parent == dir) break;
         dir = parent;
     }
 
-    std::string cand = lookIn(splitPathEnv(), kCxxNames);
+    std::vector<std::string> path = splitPathEnv();
+    g_tc.diag.push_back("PATH = " + (std::getenv("PATH") ? std::string(std::getenv("PATH")) : "(未设置)"));
+    std::string cand = lookIn(path, kCxxNames);
     if (!cand.empty()) {
         g_tc.cxx = cand;
         g_tc.source = "PATH";
+        g_tc.diag.push_back("PATH 里找到 " + cand + "，采用");
         return;
     }
+    g_tc.diag.push_back("PATH 里没有 g++ / clang++");
 
     const char* const kFixed[] = {
 #if defined(_WIN32)
@@ -187,8 +228,10 @@ void findCxx() {
         if (isFile(*p)) {
             g_tc.cxx = *p;
             g_tc.source = "系统固定位置";
+            g_tc.diag.push_back(std::string("系统固定位置候选 ") + *p + " -> 找到，采用");
             return;
         }
+        g_tc.diag.push_back(std::string("系统固定位置候选 ") + *p + " -> 没有");
     }
 
     g_tc.note =
@@ -197,6 +240,7 @@ void findCxx() {
 #else
         "没找到 g++。Mac 上跑一次 xcode-select --install；Linux 上装 g++。";
 #endif
+    g_tc.diag.push_back("全部候选都没找到 g++/clang++");
 }
 
 // cmake / ninja / code：先看工具箱，再看 PATH，最后几个老地方
@@ -234,14 +278,17 @@ void findRest() {
     std::vector<std::string> all = kitDirs;
     all.insert(all.end(), path.begin(), path.end());
 
+    g_tc.diag.push_back("cmake 候选目录（工具箱优先，再 PATH）：" + Proc::describe(all));
     g_tc.cmake = lookIn(all, kCmake);
+    g_tc.diag.push_back(g_tc.cmake.empty() ? "  -> 没找到 cmake" : "  -> 找到 " + g_tc.cmake);
     g_tc.ninja = lookIn(all, kNinja);
+    g_tc.diag.push_back(g_tc.ninja.empty() ? "  -> 没找到 ninja" : "  -> 找到 " + g_tc.ninja);
     g_tc.vscode = lookIn(all, kCode);
 #if defined(__APPLE__)
     if (g_tc.cmake.empty())
         for (const char* p : {"/usr/local/bin/cmake", "/opt/homebrew/bin/cmake",
                               "/Applications/CMake.app/Contents/bin/cmake"})
-            if (isFile(p)) { g_tc.cmake = p; break; }
+            if (isFile(p)) { g_tc.cmake = p; g_tc.diag.push_back(std::string("Mac 固定位置候选 ") + p + " -> 找到，采用"); break; }
     if (g_tc.vscode.empty()) {
         const char* p = "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code";
         if (isFile(p)) g_tc.vscode = p;
@@ -251,6 +298,7 @@ void findRest() {
     // 起 cmake 之前要把这些目录插进 PATH：cmake 自己要能找到 g++ 和 ninja
     for (const std::string& d : {fs::dirOf(g_tc.cxx), fs::dirOf(g_tc.cmake), fs::dirOf(g_tc.ninja)})
         if (!d.empty()) g_tc.binDirs.push_back(d);
+    g_tc.diag.push_back("子进程 PATH 注入目录：" + Proc::describe(g_tc.binDirs));
 }
 
 }  // namespace

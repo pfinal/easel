@@ -32,6 +32,7 @@ struct OutLine {
 struct Ed {
     TextEditor* te = nullptr;
     EditorPaths paths;
+    std::vector<std::string> pathDiag;   // resolvePaths() 试过的候选，verbose 时打出来
     bool        pathsResolved = false;
     bool        loaded = false;
     std::string loadError;
@@ -137,12 +138,19 @@ void resolvePaths(Ed& e) {
     // cwd 优先。
     std::string cwd = fs::cwd();
     e.paths.projectDir.clear();
+    e.pathDiag.push_back("---- projectDir 候选（顺序：cwd -> 编译期常量 -> exe 上一级）----");
     for (const std::string& cand : {cwd, compiledProject, fs::dirOf(exeDir())}) {
-        if (!cand.empty() && looksLikeProject(cand)) {
-            e.paths.projectDir = cand;
-            break;
+        if (cand.empty()) {
+            e.pathDiag.push_back("(空，跳过)");
+            continue;
         }
+        bool ok = looksLikeProject(cand);
+        e.pathDiag.push_back(cand + " -> " +
+                             (ok ? "像工程（有 src/app.cpp 和 src/solver.cpp），采用"
+                                 : "不像工程（缺 src/app.cpp 或 src/solver.cpp）"));
+        if (ok && e.paths.projectDir.empty()) e.paths.projectDir = cand;
     }
+    if (e.paths.projectDir.empty()) e.pathDiag.push_back("都不像，projectDir 留空（不瞎猜）");
     // 全没匹配上就是真没打开工程（比如刚解压发布包、双击 Easel.app 看看而已），留空，
     // 别退回 cwd —— 之前这里退回过 cwd，但 GLFW 的 Cocoa 后端默认会在起窗口时把进程
     // cwd chdir 到 <Easel.app>/Contents/Resources/（vendor/glfw/src/cocoa_init.m 的
@@ -199,12 +207,16 @@ void resolvePaths(Ed& e) {
             dirs.push_back(joinPath(fs::dirOf(e.paths.projectDir), "easel"));
         }
         dirs.push_back(compiledEasel);
+        e.pathDiag.push_back("---- easelDir 候选（就近优先，编译期常量垫底）----");
         for (const std::string& cand : dirs) {
-            if (!cand.empty() && looksLikeEaselTree(cand)) {
-                e.paths.easelDir = cand;
-                break;
-            }
+            if (cand.empty()) continue;
+            bool ok = looksLikeEaselTree(cand);
+            e.pathDiag.push_back(cand + " -> " +
+                                 (ok ? "是真源码树（有 CMakeLists.txt 和 include/easel/easel.h），采用"
+                                     : "不是（缺 CMakeLists.txt 或 include/easel/easel.h）"));
+            if (ok && e.paths.easelDir.empty()) e.paths.easelDir = cand;
         }
+        if (e.paths.easelDir.empty()) e.pathDiag.push_back("都不是，easelDir 留空");
     }
 
     if (e.paths.file.empty()) {
@@ -418,6 +430,12 @@ const EditorPaths& editorPaths() {
     Ed& e = ed();
     resolvePaths(e);
     return e.paths;
+}
+
+const std::vector<std::string>& editorPathsDiag() {
+    Ed& e = ed();
+    resolvePaths(e);
+    return e.pathDiag;
 }
 
 void setEditorFile(const std::string& path) {

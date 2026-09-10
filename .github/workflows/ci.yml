@@ -66,8 +66,10 @@ jobs:
 
       - name: 模板工程也要能构建（三个 target）
         if: runner.os != 'Windows'
+        # -DEASEL_DIR 是传给 CMake 的路径参数：统一加引号、把反斜杠换成正斜杠再传
+        # （Windows 上 github.workspace 展开成 D:\a\easel\easel，反斜杠会被 CMake 当转义）。
         run: |
-          cmake -S template -B template/build/default -DCMAKE_BUILD_TYPE=RelWithDebInfo -DEASEL_DIR=${{ github.workspace }}
+          cmake -S template -B template/build/default -DCMAKE_BUILD_TYPE=RelWithDebInfo -DEASEL_DIR="$(echo "$GITHUB_WORKSPACE" | tr '\\' '/')"
           cmake --build template/build/default --parallel
         shell: bash
 
@@ -75,7 +77,9 @@ jobs:
       # 报错时能靠 step 名直接定位是哪个 target 编不过（--config 在多配置生成器下必须带）。
       - name: 模板：配置
         if: runner.os == 'Windows'
-        run: cmake -S template -B template/build/default -DCMAKE_BUILD_TYPE=RelWithDebInfo -DEASEL_DIR=${{ github.workspace }}
+        # 同上：加引号 + 反斜杠换正斜杠，否则 \a \e 会被 CMake 当转义序列吃掉
+        # （CMake Error: add_subdirectory given source "D:aeaseleasel" ...）。
+        run: cmake -S template -B template/build/default -DCMAKE_BUILD_TYPE=RelWithDebInfo -DEASEL_DIR="$(echo "$GITHUB_WORKSPACE" | tr '\\' '/')"
         shell: bash
 
       - name: 模板：编 solver
@@ -158,7 +162,9 @@ jobs:
           g++ -std=c++17 -Wall -Wextra -DEASEL_STANDALONE -I$GITHUB_WORKSPACE/dist src/solver.cpp -o solver
           ./solver data/example.json
           # 生成的那份构建脚本也要能编出界面
-          cmake -S .easel -B .easel/build -DCMAKE_BUILD_TYPE=Release -DEASEL_DIR=$GITHUB_WORKSPACE
+          # （这个 job 只跑在 ubuntu 上，本来不会有反斜杠；这里统一加引号 + 换正斜杠只是跟
+          # 其它几处 -DEASEL_DIR 的写法保持一致，防止以后被复制到 Windows 腿上时忘了改）
+          cmake -S .easel -B .easel/build -DCMAKE_BUILD_TYPE=Release -DEASEL_DIR="$(echo "$GITHUB_WORKSPACE" | tr '\\' '/')"
           cmake --build .easel/build --target app --parallel
           test -f .easel/build/bin/app
 
@@ -257,17 +263,21 @@ jobs:
           echo EXIT=%ERRORLEVEL%
 
       # 作品名已限定 ASCII（D-36）：这步原来是用来顺便验中文参数的，现在换成 ASCII 名字
+      # 重定向到文件再 type 出来：句柄给了文件，不依赖 AttachConsole 能不能接上父控制台，
+      # 这样无论 exe 那边控制台接管成不成，输出都看得到。
       - name: 无头验证 2/3：easel.exe --new
         shell: cmd
         run: |
-          build\mingw\easel.exe --new "%TEMP%\np" --name Demo --full
+          build\mingw\easel.exe --new "%TEMP%\np" --name Demo --full > new.txt 2>&1
           echo EXIT=%ERRORLEVEL%
+          type new.txt
 
       - name: 无头验证 3/3：creative --doctor
         shell: cmd
         run: |
-          build\mingw\examples\creative\easel_example_creative.exe --doctor
+          build\mingw\examples\creative\easel_example_creative.exe --doctor > doctor.txt 2>&1
           echo EXIT=%ERRORLEVEL%
+          type doctor.txt
 
       - name: DX11 · MinGW，允许失败
         continue-on-error: true
