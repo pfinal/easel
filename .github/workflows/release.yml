@@ -110,6 +110,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: 依赖源码抓进 vendor/（打包脚本要求它先就位）
+        run: python3 scripts/vendor.py
+
       - name: 构建 + 打包 + 签名（脚本自己全包了）
         run: python3 scripts/make_bundle_mac.py
 
