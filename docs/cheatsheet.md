@@ -74,6 +74,7 @@ int main(int argc, char** argv) {
     app.onExportCase([]{ return json(S); }); // 「导出调试用例」要导出什么
     app.status("准备好了");                   // 状态栏文字
     app.statusBar(true);                     // 底部状态栏默认不显示，要用就开（F12 打开时也会临时出现）
+    app.frameRate(60);                       // 帧率上限，默认就是 60；垂直同步失效时的兜底
     return app.run();
 }
 ```
@@ -81,7 +82,7 @@ int main(int argc, char** argv) {
 命令行：`app --open data/x.json --solve`（跳过点击） · `--doctor`（自检） ·
 `--debug`（直接开调试台） · `--edit`（直接开编辑栏） · `--edit-run`（开起来就编译运行一次） ·
 `--export <目录>`（导出可独立编译的工程，不开窗口） · `--seed N` ·
-`--frames N --screenshot a.png`（截图）
+`--frames N --screenshot a.png`（截图） · `--fps N`（帧率上限，`0` = 不限制）
 
 ## 工作台 —— 从这里开始（D-29）
 

@@ -26313,7 +26313,7 @@ inline bool saveJson(const std::string& path, const json& j, int indent = 2) {
 // ============================================================================
 //  7. 命令行参数
 //     --seed N   --case <file>   --iters N   --open <file>   --solve
-//     --dump-frame N   --doctor   --quiet
+//     --dump-frame N   --doctor   --quiet   --fps N
 // ============================================================================
 namespace cli {
 

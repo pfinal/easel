@@ -44,6 +44,17 @@ public:
     const Theme& theme() const;
     App&         background(const Color& c);   // 不给就用主题的 bg
     App&         panelWidth(float px);
+    // 帧率上限，默认 60。传 0 = 不限制（完全交给垂直同步）。垂直同步在虚拟机 /
+    // 没装驱动的机器上经常失效，不限帧就会空转烧一个 CPU 核，所以默认给个兜底。
+    // `--fps N` 命令行参数会在这句话之后覆盖这里设的值。
+    App&         frameRate(double fps);
+    // 工具类程序专用：开启后，如果这一帧没有任何鼠标/键盘输入，且已经空闲超过
+    // 0.5 秒，就把这一帧的目标间隔放大到 100ms（10 帧）省电；一有输入、或子进程在
+    // 跑（编辑栏编译/运行）、或有 toast/横幅在显示，立刻恢复满速。默认关（作品的
+    // 画布可能有自己的动画，不该被这个功能打断）；工作台这种界面静止时用得上。
+    App&         idleThrottle(bool on);
+    // 开了 idleThrottle 时，这个回调返回 true 就保持满帧（比如有子进程在输出）。
+    App&         busyWhen(std::function<bool()> fn);
 
     // ---------------- 回调（每帧调用，立即模式）----------------
     App& onDraw(std::function<void(Canvas&)> fn);   // 画布
@@ -108,6 +119,7 @@ public:
     //   --quiet            EASEL_TRACE / EASEL_LOG 不往终端刷屏
     //   --frames N         跑 N 帧自动退出（CI / 截图用）
     //   --screenshot <png> 退出前存一张截图
+    //   --fps N            帧率上限（0 = 不限制），覆盖 frameRate() 设的值
     // 自己的参数用 easel::cli::args() 取：cli::args().num("iters", 200)
     std::string openPath() const;    // --open 给的路径，没给就是空串
     bool        wantsSolve() const;  // 有没有 --solve

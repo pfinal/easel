@@ -5,6 +5,9 @@
 #include <GLFW/glfw3.h>
 #include <imgui_impl_glfw.h>
 
+#include <chrono>
+#include <thread>
+
 #if defined(_WIN32)
 #include <windows.h>
 #include <cstdio>
@@ -112,6 +115,13 @@ struct App::Impl {
     bool   running = true;
     double lastTime = 0;
 
+    // 帧率上限 / 省电（D-3x：垂直同步在虚拟机上常常失效，空转烧一个 CPU 核）
+    double targetFps = 60.0;    // 0 = 不限制
+    double frameInterval = 1.0 / 60.0;   // 这一帧结束后，run() 的循环要 sleep 到这个间隔
+    bool   idleThrottleOn = false;
+    double lastActiveTime = 0;  // 上一次「有事」（输入 / 子进程在跑 / toast / 横幅）的时间点
+    std::function<bool()> busyFn;  // idleThrottle 的补充回调：返回 true 表示有子进程在忙
+
     // run() 循环体（现在是 frame()）用到的、每帧都要保留状态的局部变量
     ImGuiIO*    io = nullptr;
     Color       clear;
@@ -173,6 +183,13 @@ App& App::theme(const Theme& t) {
 const Theme& App::theme() const { return p_->theme; }
 App& App::background(const Color& c) { p_->customBg = true; p_->bg = c; return *this; }
 App& App::panelWidth(float px) { p_->panelW = px; return *this; }
+App& App::frameRate(double fps) {
+    p_->targetFps = fps;
+    p_->frameInterval = fps > 0.0 ? 1.0 / fps : 0.0;
+    return *this;
+}
+App& App::idleThrottle(bool on) { p_->idleThrottleOn = on; return *this; }
+App& App::busyWhen(std::function<bool()> fn) { p_->busyFn = fn; return *this; }
 App& App::editorWidth(float px) { p_->editorW = px; return *this; }
 App& App::editorEnabled(bool on) {
     p_->editorEnabled = on;
@@ -509,6 +526,7 @@ int App::run() {
               (double)d.dpi, internal::fontInfo().path.empty() ? "内置" : internal::fontInfo().path.c_str());
 
     d.lastTime = glfwGetTime();
+    d.lastActiveTime = d.lastTime;
     d.clear = d.customBg ? d.bg : d.theme.bg;
     d.io = &io;
 
@@ -517,10 +535,24 @@ int App::run() {
     d.shotPath = cli::args().str("screenshot");
     d.framesRun = 0;
 
+    // --fps N 在 frameRate() 之后覆盖：命令行的意愿比代码里写死的默认值优先级更高
+    // （比如在没有显卡驱动的机器上临时把帧率压到个位数验证画面还对不对）。
+    if (cli::args().has("fps")) frameRate((double)cli::args().num("fps", 60));
+
     // 网页版（Emscripten）只需要把这个 while 换成 emscripten_set_main_loop(frame)，
-    // 所以循环体不许再长回 run() 里 —— 都在 frame() 里。
+    // 所以循环体不许再长回 run() 里 —— 都在 frame() 里；帧率上限的 sleep 只在这个
+    // 桌面循环里做（浏览器本来就靠 requestAnimationFrame 控速，不需要我们自己补）。
     while (d.running && !glfwWindowShouldClose(d.win)) {
+        auto t0 = std::chrono::steady_clock::now();
         frame();
+        // 垂直同步失效时的兜底：按 frame() 算出来的目标间隔（正常是 1/frameRate()，
+        // 最小化 / 闲时会被临时放大到 100ms）补 sleep。sleep 前留 1ms 余量，避免因为
+        // sleep_for 本身的调度误差睡过头、把下一帧顶到间隔之外。
+        if (d.frameInterval > 0.0) {
+            double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+            double remain = d.frameInterval - elapsed - 0.001;
+            if (remain > 0.0) std::this_thread::sleep_for(std::chrono::duration<double>(remain));
+        }
     }
 
     EASEL_LOG("退出");
@@ -545,6 +577,27 @@ void App::frame() {
     d.lastTime = now;
     shared().frame++;
     shared().time = now;
+
+    // ---------------- 最小化 / 窗口不可见：只维持状态，不画 ----------------
+    // iconified，或者 framebuffer 宽高是 0（比如切到另一个虚拟桌面）时，newFrame /
+    // 画布 / swap 全部没必要做，省下一整块 GPU + CPU。dt 照样喂给 onFrame，动画状态
+    // （计时器之类）不会因为最小化过一段时间突然跳变。
+    // 注意：这个 return 发生在 d.framesRun++ 和 --screenshot 判断之前，所以
+    // --frames N / --screenshot 在这条路径下不计数、不触发——不然无头 CI 如果窗口
+    // 一开始就以最小化状态创建，会在这里被拦住永远走不到画面那条路径；sleep 时长
+    // 写死 100ms，不跟着 frameRate() 走（哪怕 frameRate(0) 不限帧，最小化时也不该空转）。
+    bool hidden = glfwGetWindowAttrib(d.win, GLFW_ICONIFIED) != 0;
+    if (!hidden) {
+        int fbw = 0, fbh = 0;
+        glfwGetFramebufferSize(d.win, &fbw, &fbh);
+        hidden = (fbw <= 0 || fbh <= 0);
+    }
+    if (hidden) {
+        if (d.onFrame) d.onFrame(dt);
+        d.frameInterval = 0.1;
+        std::this_thread::sleep_for(std::chrono::duration<double>(0.1));
+        return;
+    }
 
     if (d.themeDirty) {
         d.themeDirty = false;
@@ -744,6 +797,35 @@ void App::frame() {
             if (!d.welcomeOpen) ImGui::CloseCurrentPopup();
             ImGui::EndPopup();
         }
+    }
+
+    // ---------------- 工具类程序闲时降频 ----------------
+    // idleThrottle(true) 时：这一帧要是没有任何输入，且已经闲了超过 0.5 秒，就把
+    // 目标间隔放大到 100ms（10 帧）；一有输入、编辑栏子进程在跑、或者 toast / 横幅
+    // 正显示着，立刻恢复满速（frameRate() 设的那个间隔）。判断输入用 io.MousePos
+    // 有没有变（io.MouseDelta 就是这个）、滚轮、任意鼠标键、字符输入、任意键盘键——
+    // 比只看 WantCaptureMouse/WantCaptureKeyboard 更稳妥，那两个只说「这次输入 ImGui
+    // 要不要」，跟「用户是不是刚动过」是两回事。
+    if (d.idleThrottleOn) {
+        bool active = (io.MouseDelta.x != 0.f || io.MouseDelta.y != 0.f) ||
+                      io.MouseWheel != 0.f || io.MouseWheelH != 0.f ||
+                      ImGui::IsMouseDown(ImGuiMouseButton_Left) ||
+                      ImGui::IsMouseDown(ImGuiMouseButton_Right) ||
+                      ImGui::IsMouseDown(ImGuiMouseButton_Middle) ||
+                      io.InputQueueCharacters.Size > 0 || io.WantTextInput;
+        if (!active) {
+            for (int k = ImGuiKey_NamedKey_BEGIN; k < ImGuiKey_NamedKey_END; ++k) {
+                if (ImGui::IsKeyDown((ImGuiKey)k)) { active = true; break; }
+            }
+        }
+        bool busy = active || internal::editorBusy() || sh.banner ||
+                    (!d.toastText.empty() && now <= d.toastUntil) ||
+                    (d.busyFn && d.busyFn());
+        if (busy) d.lastActiveTime = now;
+        bool idle = (now - d.lastActiveTime) > 0.5;
+        d.frameInterval = idle ? 0.1 : (d.targetFps > 0.0 ? 1.0 / d.targetFps : 0.0);
+    } else {
+        d.frameInterval = d.targetFps > 0.0 ? 1.0 / d.targetFps : 0.0;
     }
 
     internal::backend::present(d.win, d.clear);

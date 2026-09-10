@@ -628,7 +628,9 @@ void draw(const Rect& r, const Theme& th, float dpi) {
 int main(int argc, char** argv) {
     App app(argc, argv);
     app.title("Easel").size(1100, 720).theme(Theme::Forest()).editorEnabled(false)
-       .debugConsoleEnabled(false);   // 工具类程序不需要调试台
+       .debugConsoleEnabled(false)    // 工具类程序不需要调试台
+       .idleThrottle(true)            // 界面静止的时候（没人点、也没有子进程在编译/跑）降到 10 帧省电
+       .busyWhen([]{ return wb().proc.running(); });   // 编译/运行中也保持满帧
     app.statusBar(true);
 
     WB& w = wb();
