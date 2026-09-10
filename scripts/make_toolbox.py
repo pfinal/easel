@@ -63,6 +63,10 @@ rem 代码酷工作台 —— 主入口（新建工程 / 编译 / 运行 / 生�
 rem 本文件必须用 GBK 存、不要加 chcp（理由见 start.bat）。
 title daimaku Easel
 set "KIT=%~dp0"
+if exist "%KIT%Easel.exe" (
+    start "" "%KIT%Easel.exe"
+    goto :eof
+)
 if not exist "%KIT%cmake\\bin\\cmake.exe" ( echo   没找到 %KIT%cmake\\bin\\cmake.exe —— 解压不完整？请重新解压整个 zip。 & goto :fail )
 if not exist "%KIT%ninja\\ninja.exe" ( echo   没找到 %KIT%ninja\\ninja.exe —— 解压不完整？ & goto :fail )
 if not exist "%KIT%w64devkit\\bin\\g++.exe" ( echo   没找到 %KIT%w64devkit\\bin\\g++.exe —— 解压不完整？ & goto :fail )
@@ -214,6 +218,31 @@ def copy_easel(dest):
     return missing
 
 
+def resolve_prebuilt_layout(path):
+    """--prebuilt-dir 认两种布局：
+
+    1. 「导出目录」（export-prebuilt.bat 产出，或从 Windows 虚拟机整个拷出来的）：
+           <path>/Easel.exe
+           <path>/prebuilt/easel-prebuilt.json  ← cmake --install 的 prefix
+    2. 「直接给 install prefix」（自己手动 cmake --install 出来的，没有 exe）：
+           <path>/easel-prebuilt.json
+
+    返回 (install_prefix_dir, exe_path_or_None)：install_prefix_dir 是那份带
+    include/ lib/ 的 cmake --install 目录，exe_path 是同级的 Easel.exe（布局 2
+    没有 exe，就是 None）。两种布局都认不出就报错。
+    """
+    variant1_prefix = os.path.join(path, "prebuilt")
+    if os.path.exists(os.path.join(variant1_prefix, "easel-prebuilt.json")):
+        exe = os.path.join(path, "Easel.exe")
+        return variant1_prefix, (exe if os.path.isfile(exe) else None)
+    if os.path.exists(os.path.join(path, "easel-prebuilt.json")):
+        return path, None
+    raise RuntimeError(
+        f"{path} 认不出布局：既没有 {os.path.join(path, 'easel-prebuilt.json')}，"
+        f"也没有 {os.path.join(variant1_prefix, 'easel-prebuilt.json')}"
+        f"（cmake --install 装出来的东西该在其中一处，重新装一遍再来）")
+
+
 def copy_prebuilt(src, dest):
     """把一份预编译好的 Easel 包放进 <工具箱>/easel/prebuilt/。
 
@@ -278,15 +307,28 @@ def write_version_json(dest, commit):
 
 
 def check_prebuilt_commit(prebuilt_dir, source_commit):
-    """--prebuilt-dir 必须带着 cmake --install 写的 easel-prebuilt.json，
-    且它的 commit 得和正在打包的源码 commit 一样 —— 不然工具箱里预编译的
-    Easel 和源码树不是同一份东西，最难查的一类问题。"""
+    """--prebuilt-dir 必须带着 cmake --install 写的 easel-prebuilt.json，且要过两条校验：
+
+    1. system 必须是 Windows —— 工具箱是给 Windows 机器用的，这份预编译包却是
+       随便一个平台编的都能通过 commit 校验（commit 只跟源码版本有关，跟编译
+       平台无关），必须在这里单独挡掉，不然会把 Mac/Linux 编的包误塞进 Windows
+       工具箱，装进去的 Easel.exe / .a 目标机器根本跑不起来（或者链接不上）。
+    2. commit 得和正在打包的源码 commit 一样 —— 不然工具箱里预编译的 Easel
+       和源码树不是同一份东西，最难查的一类问题。
+    """
     stamp = os.path.join(prebuilt_dir, "easel-prebuilt.json")
     if not os.path.exists(stamp):
         raise RuntimeError(f"{prebuilt_dir} 里没有 easel-prebuilt.json（不像是 `cmake --install` 装出来的，"
                             f"重新 cmake --install 一遍再来）")
     with open(stamp, encoding="utf-8") as f:
-        prebuilt_commit = json.load(f).get("commit")
+        meta = json.load(f)
+    system = meta.get("system")
+    if system != "Windows":
+        raise RuntimeError(
+            f"{stamp} 里 system 是 {system!r}，不是 \"Windows\" —— 这份预编译包不是 Windows/MinGW "
+            f"编的，不能塞进 Windows 工具箱（目标机器上会跑不起来），换一份在 Windows 上 "
+            f"cmake --install 出来的再来")
+    prebuilt_commit = meta.get("commit")
     if not source_commit:
         raise RuntimeError("打包用的这份 Easel 源码不是 git 仓库（或者没装 git），测不出 commit，"
                             "没法核对预编译包是不是同一份源码编的")
@@ -299,8 +341,10 @@ def main():
     ap.add_argument("--out", default=os.path.join(ROOT, "windows-green", "工具箱"))
     ap.add_argument("--no-zip", action="store_true")
     ap.add_argument("--prebuilt-dir", metavar="路径",
-                    help="一份编好的 Easel 安装目录（cmake --install 的 prefix），"
-                         "拷进 easel/prebuilt/。必须是 Windows/MinGW 编的，由 CI 产。"
+                    help="一份编好的 Easel，认两种布局：export-prebuilt.bat 产出的导出目录"
+                         "（<路径>/Easel.exe + <路径>/prebuilt/，两者都拷进工具箱）"
+                         "，或者直接给 cmake --install 的 prefix（<路径>/easel-prebuilt.json，"
+                         "没有 exe）。必须是 Windows/MinGW 编的，由 CI 或虚拟机产。"
                          "不给就跳过 —— 第一次编译要多等三分钟，别的都一样。")
     args = ap.parse_args()
 
@@ -332,19 +376,28 @@ def main():
     print(f"  源码戳 → easel/VERSION.json（commit {source_commit or 'unknown'}）")
 
     # 预编译包（D-26）：有它工程 find_package(easel CONFIG) 几秒钟就链上
+    exe_dest = os.path.join(out, "Easel.exe")
+    if os.path.exists(exe_dest):
+        os.remove(exe_dest)  # 上一次组装可能留下的，这次没带就别让它悄悄留在包里
+    have_prebuilt_exe = False
     if args.prebuilt_dir:
         try:
-            check_prebuilt_commit(args.prebuilt_dir, source_commit)
+            prebuilt_prefix, exe_path = resolve_prebuilt_layout(args.prebuilt_dir)
+            check_prebuilt_commit(prebuilt_prefix, source_commit)
         except RuntimeError as e:
             print(f"[工具箱] {e}", file=sys.stderr)
             return 2
         dest = os.path.join(out, "easel", "prebuilt")
         try:
-            size = copy_prebuilt(args.prebuilt_dir, dest)
+            size = copy_prebuilt(prebuilt_prefix, dest)
         except (OSError, RuntimeError) as e:
             print(f"[工具箱] 预编译包拷不进来：{e}", file=sys.stderr)
             return 2
         print(f"  预编译的 Easel → easel/prebuilt（{size/1e6:.0f} MB）")
+        if exe_path:
+            shutil.copy2(exe_path, exe_dest)
+            have_prebuilt_exe = True
+            print(f"  预编译主程序 → Easel.exe（{os.path.getsize(exe_dest)/1e6:.0f} MB）")
     else:
         print("  没给 --prebuilt-dir：工具箱里不带预编译的 Easel，"
               "第一次编译要等三分钟。Windows 的那份由 CI 产。")
@@ -379,7 +432,10 @@ def main():
                 full = os.path.join(dp, f)
                 z.write(full, os.path.relpath(full, out))
     print(f"好了：{zip_path}（{os.path.getsize(zip_path)/1e6:.0f} MB）")
-    print("解压后，双击 start.bat。路径别太深，Windows 有 260 字符限制。")
+    if have_prebuilt_exe:
+        print("解压后，双击 Easel.exe 或 Easel.bat 直接开。路径别太深，Windows 有 260 字符限制。")
+    else:
+        print("解压后，双击 start.bat。路径别太深，Windows 有 260 字符限制。")
     return 0
 
 
