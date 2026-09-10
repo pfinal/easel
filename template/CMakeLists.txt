@@ -91,9 +91,10 @@ if(APPLE)
   set_target_properties(app PROPERTIES MACOSX_BUNDLE FALSE)
 endif()
 if(WIN32)
-  # 交付时改成 TRUE 就没有黑框；开发阶段留 FALSE，能看到 printf。
-  # 注意：Easel 会把 stdout 接到应用内的日志窗，所以就算改成 TRUE 也看得到输出。
-  set_target_properties(app PROPERTIES WIN32_EXECUTABLE FALSE)
+  set_target_properties(app PROPERTIES WIN32_EXECUTABLE TRUE)   # 没有黑框；printf 进 F12 日志窗，命令行下 Easel 会接回父终端
+  if(MSVC)
+    target_link_options(app PRIVATE "/ENTRY:mainCRTStartup")
+  endif()
 endif()
 
 # 数据和素材复制到 exe 旁边，双击也能跑（没有 assets/ 就跳过）

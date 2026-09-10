@@ -371,8 +371,22 @@ void drawDebugConsole(bool* open, App& app) {
     Shared&      s = shared();
     ImGui::SetNextWindowSize(ImVec2(760 * s.dpi, 460 * s.dpi), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowPos(ImVec2(60 * s.dpi, 60 * s.dpi), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("调试台 (F12)", open)) {
+
+    // 调试台是「工具层」，故意不用 th.surface 原色 —— 不然和右侧面板分不开。
+    Color winBg = th.dark ? th.surface.darker(0.45f).mix(th.accent, 0.08f)
+                          : th.surface.lighter(0.06f).mix(th.accent, 0.06f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, iv4(winBg.withAlpha(0.97f)));
+    ImGui::PushStyleColor(ImGuiCol_TitleBg, iv4(th.accent.darker(0.45f)));
+    ImGui::PushStyleColor(ImGuiCol_TitleBgActive, iv4(th.accent.darker(0.25f)));
+    ImGui::PushStyleColor(ImGuiCol_Border, iv4(th.accent));
+    ImGui::PushStyleColor(ImGuiCol_Tab, iv4(winBg.lighter(0.08f)));
+    ImGui::PushStyleColor(ImGuiCol_TabSelected, iv4(th.accent.darker(0.15f)));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 2.f * s.dpi);
+
+    if (!ImGui::Begin("调试台 · F12", open)) {
         ImGui::End();
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor(6);
         return;
     }
     if (ImGui::BeginTabBar("##dbgtabs")) {
@@ -386,6 +400,8 @@ void drawDebugConsole(bool* open, App& app) {
         ImGui::EndTabBar();
     }
     ImGui::End();
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor(6);
 }
 
 }  // namespace internal

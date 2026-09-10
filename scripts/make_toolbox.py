@@ -83,6 +83,49 @@ echo   编不出来。把上面的报错整段复制下来求助。
 pause
 """
 
+PREBUILT_BAT = """@echo off
+rem 把编好的东西收进一个目录，打包发给维护者（或者放回工具箱里）。
+rem 本文件必须用 GBK 存、不要加 chcp（理由见 启动.bat）。
+title daimaku prebuilt export
+setlocal
+set "KIT=%~dp0"
+set "OUT=%KIT%prebuilt-mingw"
+set "PATH=%KIT%w64devkit\\bin;%KIT%cmake\\bin;%KIT%ninja;%PATH%"
+if not exist "%KIT%easel\\build\\mingw\\workbench.exe" (
+    echo.
+    echo   还没有编过工作台。先双击 工作台.bat，编完再来。
+    goto :fail
+)
+if exist "%OUT%" rmdir /s /q "%OUT%"
+mkdir "%OUT%"
+echo.
+echo   [1/3] 工作台 workbench.exe
+copy /y "%KIT%easel\\build\\mingw\\workbench.exe" "%OUT%\\" >nul
+echo   [2/3] 预编译的 Easel 包（cmake --install，十几 MB）
+"%KIT%cmake\\bin\\cmake.exe" --install "%KIT%easel\\build\\mingw" --prefix "%OUT%\\prebuilt"
+if errorlevel 1 goto :fail
+echo   [3/3] 版本信息
+> "%OUT%\\版本.txt" (
+    echo 工具链: w64devkit gcc 14.1 + Ninja
+    echo 日期: %DATE% %TIME%
+    findstr /c:"define EASEL_VERSION" "%KIT%easel\\include\\easel\\core.h"
+    "%KIT%w64devkit\\bin\\g++.exe" --version
+)
+echo.
+echo   好了：%OUT%
+echo   把这个目录整个压成 zip 发给维护者就行。
+goto :end
+
+:fail
+echo.
+echo   失败了。把上面的输出整段复制下来求助。
+
+:end
+echo.
+pause
+endlocal
+"""
+
 START_BAT = """@echo off
 rem 代码酷 C++ 工具箱
 rem 本文件必须用 GBK 存、不要加 chcp —— cmd.exe 在批处理里切代码页
@@ -255,6 +298,10 @@ def main():
     for name in ("工作台.bat", "workbench.bat"):
         with open(os.path.join(out, name), "w", encoding="gbk", newline="\r\n") as f:
             f.write(WORKBENCH_BAT)
+    # 预编译导出脚本（把编好的东西打包发给维护者）
+    for name in ("导出预编译.bat", "export-prebuilt.bat"):
+        with open(os.path.join(out, name), "w", encoding="gbk", newline="\r\n") as f:
+            f.write(PREBUILT_BAT)
     readme = os.path.join(ROOT, "windows-green", "README.md")
     if os.path.exists(readme):
         shutil.copy2(readme, os.path.join(out, "使用说明.md"))

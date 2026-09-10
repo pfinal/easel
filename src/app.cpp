@@ -5,7 +5,33 @@
 #include <GLFW/glfw3.h>
 #include <imgui_impl_glfw.h>
 
+#if defined(_WIN32)
+#include <windows.h>
+#include <cstdio>
+#endif
+
 namespace easel {
+
+#if defined(_WIN32)
+// GUI 子系统的程序没有控制台；从命令行跑 --doctor / --export 时把输出接回父终端。
+// 双击启动时没有父控制台，AttachConsole 失败，什么都不做（也不弹黑框）。
+static void attachParentConsole() {
+    if (!AttachConsole(ATTACH_PARENT_PROCESS)) return;
+    FILE* f = nullptr;
+#if defined(_MSC_VER)
+    freopen_s(&f, "CONOUT$", "w", stdout);
+    freopen_s(&f, "CONOUT$", "w", stderr);
+    freopen_s(&f, "CONIN$",  "r", stdin);
+#else
+    f = freopen("CONOUT$", "w", stdout);
+    f = freopen("CONOUT$", "w", stderr);
+    f = freopen("CONIN$",  "r", stdin);
+#endif
+    (void)f;
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+    SetConsoleOutputCP(CP_UTF8);   // 我们打的是 UTF-8
+}
+#endif
 
 using internal::col;
 using internal::iv;
@@ -105,6 +131,9 @@ struct App::Impl {
 
 // ---------------------------------------------------------------- 构造
 App::App(int argc, char** argv) : p_(new Impl) {
+#if defined(_WIN32)
+    attachParentConsole();
+#endif
     g_instance = this;
     if (argc > 0 && argv) cli::parse(argc, argv);
     installCrashHandler();
