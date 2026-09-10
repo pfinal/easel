@@ -201,6 +201,9 @@ jobs:
   #  版本和下载地址照 scripts/make_toolbox.py 的 COMPONENTS 抄，一字不差。
   # ==========================================================================
   windows-toolbox:
+    # 这个 job 只下载 w64devkit + Ninja，cmake 用的是 windows-latest runner 自带的那份
+    # （没有单独下载/固定版本）；绿色工具箱里打包的 cmake 是 3.31.6（见
+    # scripts/make_toolbox.py 的 COMPONENTS），两者版本不同、不是同一份 cmake。
     name: Windows · 绿色工具箱（w64devkit + Ninja）
     runs-on: windows-latest
     steps:

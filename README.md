@@ -65,7 +65,7 @@ cmake --preset default && cmake --build --preset default
 
 ### Windows
 
-There is a no-install toolbox containing gcc, cmake, ninja, and Easel, assembled by `scripts/make_toolbox.py`. After extracting it, double-click `Easel.bat`. The toolbox's official build ships together with the first release.
+There is a no-install toolbox containing gcc, cmake, ninja, and Easel, assembled by `scripts/make_toolbox.py`. After extracting it, double-click `Easel.bat`. The toolbox's official build ships together with the first release. Requires Windows 7 SP1 x64 or newer (Win10/11 also work); not yet tested on Windows 7. See [`windows-green/README.md`](windows-green/README.md) for details, including the OpenGL/DX11 fallback.
 
 ## Workbench
 
