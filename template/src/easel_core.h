@@ -25610,14 +25610,16 @@ inline void swap(nlohmann::NLOHMANN_BASIC_JSON_TPL& j1, nlohmann::NLOHMANN_BASIC
 #if defined(_WIN32)
 #  include <direct.h>
 #  include <io.h>
-#  ifndef EASEL_NO_STACKTRACE
-#    ifndef WIN32_LEAN_AND_MEAN
-#      define WIN32_LEAN_AND_MEAN
-#    endif
-#    ifndef NOMINMAX
-#      define NOMINMAX
-#    endif
-#    include <windows.h>
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
+#  ifndef NOMINMAX
+#    define NOMINMAX
+#  endif
+#  include <windows.h>   // cli::parse() 靠它拿 UTF-16 命令行；崩溃捕获（下面）也用得上
+#  include <shellapi.h>  // CommandLineToArgvW
+#  if defined(_MSC_VER)
+#    pragma comment(lib, "shell32.lib")   // CommandLineToArgvW；MinGW 靠 CMakeLists.txt 里显式链 shell32
 #  endif
 #  define EASEL_MKDIR(p) ::_mkdir(p)
 #  define EASEL_GETCWD(b, n) ::_getcwd((b), (n))
@@ -26364,6 +26366,36 @@ inline void parse(int argc, char** argv) {
     Args& a = args();
     a.raw.clear();
     a.positional.clear();
+
+#if defined(_WIN32)
+    // argv 在 Windows 上是当前 ANSI 代码页（cp936/cp437...）的字节，不是 UTF-8——Easel 全库
+    // （existsU8、widen() 等）按 UTF-8 处理字符串，直接用会把 --name 测试作品 这种参数搞乱码
+    // 甚至拒收。这里不管传进来的 argv 是什么，一律用 GetCommandLineW() 重新取一份 UTF-16 的
+    // 命令行，CommandLineToArgvW() 切好，逐个转 UTF-8，再走下面同一套解析逻辑。
+    std::vector<std::string> u8owned;    // 转换后的 UTF-8 参数，下面的指针都指向这里的存储
+    std::vector<char*>       u8argv;
+    int     wargc    = 0;
+    LPWSTR* wargvRaw = ::CommandLineToArgvW(::GetCommandLineW(), &wargc);
+    if (wargvRaw) {
+        u8owned.reserve((size_t)wargc);
+        for (int i = 0; i < wargc; ++i) {
+            int need = ::WideCharToMultiByte(CP_UTF8, 0, wargvRaw[i], -1, nullptr, 0, nullptr, nullptr);
+            std::string s;
+            if (need > 1) {
+                s.resize((size_t)need - 1);   // WideCharToMultiByte 的 need 里含结尾 \0
+                ::WideCharToMultiByte(CP_UTF8, 0, wargvRaw[i], -1, &s[0], need, nullptr, nullptr);
+            }
+            u8owned.push_back(std::move(s));
+        }
+        ::LocalFree(wargvRaw);
+        u8argv.reserve(u8owned.size());
+        for (std::string& s : u8owned) u8argv.push_back(&s[0]);
+        argc = (int)u8argv.size();
+        argv = u8argv.empty() ? nullptr : u8argv.data();
+    }
+    // CommandLineToArgvW 拿不到就照旧用传进来的 argv（大概率是乱码，但至少不崩）
+#endif
+
     if (argc > 0 && argv && argv[0]) a.program = argv[0];
     for (int i = 1; i < argc; ++i) {
         std::string s = argv[i];

@@ -208,4 +208,14 @@ TEST_CASE("新建工程：作品名进 CMakeLists / app.cpp，库文件搬进 .e
     CHECK(existsU8(joinPath(fr.dir, "data/example.json")));
     CHECK(existsU8(joinPath(fr.dir, ".easel/easel_core.h")));
     CHECK_FALSE(existsU8(joinPath(fr.dir, "CMakeLists.txt")));
+
+    // parentDir 指向一个还不存在的多级目录：自动建出来（CI 里 --new /tmp/blank 这种）
+    std::string deepParent = joinPath(tmp, "a/b/c");
+    CHECK_FALSE(existsU8(deepParent));
+    NewProjectOptions deep = o;
+    deep.parentDir = deepParent;
+    deep.name = "深层工程";
+    NewProjectReport dr = createProject(deep);
+    REQUIRE_MESSAGE(dr.ok, dr.error);
+    CHECK(existsU8(joinPath(deepParent, "深层工程/src/app.cpp")));
 }

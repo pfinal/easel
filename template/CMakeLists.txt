@@ -68,6 +68,11 @@ endif()
 add_executable(solver src/solver.cpp)
 target_compile_definitions(solver PRIVATE EASEL_STANDALONE)
 target_include_directories(solver PRIVATE src)
+if(WIN32)
+  # cli::parse() 用 CommandLineToArgvW（shellapi.h）把命令行转成 UTF-8；solver 不链 easel::easel，
+  # 裸编 easel_core.h，所以这里要单独链一次。
+  target_link_libraries(solver PRIVATE shell32)
+endif()
 
 # ---- 2. 测试（有 tests/test_solver.cpp 才建；新工程默认不带，D-30）----------
 if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_solver.cpp)

@@ -59,15 +59,19 @@ rem 代码酷工作台 —— 主入口（新建工程 / 编译 / 运行 / 生�
 rem 本文件必须用 GBK 存、不要加 chcp（理由见 启动.bat）。
 title daimaku workbench
 set "KIT=%~dp0"
+if not exist "%KIT%cmake\\bin\\cmake.exe" ( echo   没找到 %KIT%cmake\\bin\\cmake.exe —— 解压不完整？请重新解压整个 zip。 & goto :fail )
+if not exist "%KIT%ninja\\ninja.exe" ( echo   没找到 %KIT%ninja\\ninja.exe —— 解压不完整？ & goto :fail )
+if not exist "%KIT%w64devkit\\bin\\g++.exe" ( echo   没找到 %KIT%w64devkit\\bin\\g++.exe —— 解压不完整？ & goto :fail )
 set "PATH=%KIT%w64devkit\\bin;%KIT%cmake\\bin;%KIT%ninja;%PATH%"
 set "WB=%KIT%easel\\build\\mingw\\workbench.exe"
 if not exist "%WB%" (
     echo.
     echo   第一次启动，要先把工作台编出来，几分钟。以后就直接开了。
+    echo   工具箱目录：%KIT%
     echo.
-    cmake -S "%KIT%easel" -B "%KIT%easel\\build\\mingw" -G Ninja -DCMAKE_BUILD_TYPE=Release -DEASEL_BUILD_EXAMPLES=OFF -DEASEL_BUILD_TESTS=OFF
+    "%KIT%cmake\\bin\\cmake.exe" -S "%KIT%easel" -B "%KIT%easel\\build\\mingw" -G Ninja -DCMAKE_BUILD_TYPE=Release -DEASEL_BUILD_EXAMPLES=OFF -DEASEL_BUILD_TESTS=OFF -DCMAKE_C_COMPILER="%KIT%w64devkit\\bin\\gcc.exe" -DCMAKE_CXX_COMPILER="%KIT%w64devkit\\bin\\g++.exe" -DCMAKE_MAKE_PROGRAM="%KIT%ninja\\ninja.exe"
     if errorlevel 1 goto :fail
-    cmake --build "%KIT%easel\\build\\mingw" --target workbench --parallel
+    "%KIT%cmake\\bin\\cmake.exe" --build "%KIT%easel\\build\\mingw" --target workbench --parallel
     if errorlevel 1 goto :fail
 )
 start "" "%WB%"

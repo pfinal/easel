@@ -283,6 +283,9 @@ endif()
 if(WIN32)
   target_link_libraries(easel PRIVATE dbghelp)
   target_compile_definitions(easel PUBLIC EASEL_HAVE_DBGHELP)
+  # cli::parse() 靠 CommandLineToArgvW（shellapi.h）把命令行转成 UTF-8；STATIC 库的 PRIVATE
+  # 依赖会自动传给链接它的可执行文件（workbench/easel_tests），所以这里加一次就够。
+  target_link_libraries(easel PRIVATE shell32)
 endif()
 if(MINGW)
   # 静态链接运行库：交付出去的 exe 不用带 libgcc_s_seh-1.dll / libstdc++-6.dll，

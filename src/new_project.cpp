@@ -90,6 +90,11 @@ endforeach()
 add_executable(solver "${PROJ}/src/solver.cpp")
 target_compile_definitions(solver PRIVATE EASEL_STANDALONE)
 target_include_directories(solver PRIVATE "${PROJ}/src" "${CMAKE_CURRENT_SOURCE_DIR}")
+if(WIN32)
+  # cli::parse() 用 CommandLineToArgvW（shellapi.h）把命令行转成 UTF-8；solver 裸编 easel_core.h，
+  # 不经过 easel::easel，这里要单独链一次 shell32。
+  target_link_libraries(solver PRIVATE shell32)
+endif()
 
 # ---- 测试（有 tests/ 才建）-------------------------------------------------
 # doctest::doctest 三条路都有：预编译包的 easelConfig 里 find_dependency(doctest) 建好了，
@@ -184,8 +189,12 @@ NewProjectReport createProject(const NewProjectOptions& opt) {
         r.error = "作品名里不能有 / \\ : * ? \" < > | 这些字符";
         return r;
     }
-    if (opt.parentDir.empty() || !isDirU8(opt.parentDir)) {
+    if (opt.parentDir.empty()) {
         r.error = "选一个存在的目录来放这个工程";
+        return r;
+    }
+    if (!isDirU8(opt.parentDir) && !makeDirsU8(opt.parentDir)) {
+        r.error = "建不出目录：" + opt.parentDir;
         return r;
     }
 
