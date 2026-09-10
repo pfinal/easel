@@ -87,12 +87,46 @@ TEST_CASE("找编译器：找到了就该是个真文件，没找到就得留下
     }
 }
 
+TEST_CASE("looksLikeProject：只有 src/ 目录不算数，甚至只有 app.cpp 也不算数") {
+    // 回归测试：resolvePaths() 曾经只看 <候选目录>/src 存不存在，导致从 easel 仓库
+    // 根目录（自己的 src/ 下也有个 app.cpp，库内部实现，凑巧同名）起进程时，
+    // projectDir 被误判成 easel 仓库自己，「导出工程」把整个 easel 仓库当学生工程导出，
+    // 自检里「有 src/solver.cpp」变成 [×]。
+    std::string tmp = joinPath(fs::cwd(), "test_lookslikeproject_tmp");
+    removeTreeU8(tmp);
+
+    // 长得像 easel 仓库自己：src/ 存在，但是空的——没有 app.cpp，也没有 solver.cpp
+    std::string easelLike = joinPath(tmp, "easel-like");
+    makeDirsU8(joinPath(easelLike, "src"));
+    CHECK_FALSE(looksLikeProject(easelLike));
+
+    // 更贴近真实场景：src/ 下有 app.cpp，但没有 solver.cpp（这正是 easel 仓库自己的样子）
+    std::string appOnly = joinPath(tmp, "app-only");
+    makeDirsU8(joinPath(appOnly, "src"));
+    writeTextU8(joinPath(appOnly, "src/app.cpp"), "// 不是学生工程");
+    CHECK_FALSE(looksLikeProject(appOnly));
+
+    // 真正的学生工程：src/app.cpp 和 src/solver.cpp 都在
+    std::string proj = joinPath(tmp, "proj");
+    makeDirsU8(joinPath(proj, "src"));
+    writeTextU8(joinPath(proj, "src/app.cpp"), "// 学生的 app.cpp");
+    writeTextU8(joinPath(proj, "src/solver.cpp"), "// 学生的算法");
+    CHECK(looksLikeProject(proj));
+
+    removeTreeU8(tmp);
+}
+
 TEST_CASE("导出工程：目录结构、自检文件、不覆盖别人的目录") {
     std::string tmp = joinPath(fs::cwd(), "test_export_tmp");
     removeTreeU8(tmp);   // 上一次跑剩下的先清掉，ctest 连跑多次才不会撞上「已经导过一次」
     std::string out = joinPath(tmp, "作品");
+    const EditorPaths& paths = editorPaths();   // 测试跑在 easel 仓库里，template/ 就在旁边
 
     ExportOptions opt;
+    // 显式指定要导出的工程，不依赖 editorPaths() 的推断——ctest 是从 build/ 里跑的，
+    // 既不是学生工程根，也不该指望 looksLikeProject() 兜底把 easel 仓库自己当工程
+    // （它现在确实不会了，这正是 D-28 那次回归要修的）。
+    opt.projectDir = joinPath(paths.easelDir.empty() ? fs::cwd() : paths.easelDir, "template");
     opt.outDir = out;
     opt.name = "作品";
     opt.withEasel = false;   // 测试里不拷 vendor/，太重

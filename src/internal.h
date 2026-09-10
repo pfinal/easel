@@ -250,6 +250,11 @@ struct EditorPaths {
     std::string file;         // 正在编辑的文件，默认 <project>/src/solver.cpp
     bool        ok = false;   // file 真的存在
 };
+// 「这个目录像不像一个学生工程根」：得同时含 src/app.cpp 和 src/solver.cpp 才算数。
+// 光有 src/ 目录不够，甚至只查 app.cpp 也不够——Easel 仓库自己根目录下的 src/ 也有
+// 一个 app.cpp（库内部实现，凑巧同名），但没有 solver.cpp。
+// resolvePaths() 用它筛 projectDir 候选；测试直接调它验证判定本身。
+bool               looksLikeProject(const std::string& dir);
 const EditorPaths& editorPaths();
 void               setEditorFile(const std::string& path);
 void               drawEditor(App& app, const Rect& r, bool* open);

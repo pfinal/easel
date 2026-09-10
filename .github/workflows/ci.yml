@@ -169,3 +169,81 @@ jobs:
       - uses: actions/checkout@v4
       - run: cmake --preset dx11
       - run: cmake --build --preset dx11 --parallel
+
+  # ==========================================================================
+  #  绿色工具箱首次双击走的就是这条路：解压 w64devkit + Ninja、从源码整棵树编一遍
+  #  （scripts/make_toolbox.py 只负责把 Easel 源码和这两个免安装工具打包进 zip，
+  #   从没有任何一处真的用这套工具链编过 —— 这个 job 补上它）。
+  #  版本和下载地址照 scripts/make_toolbox.py 的 COMPONENTS 抄，一字不差。
+  # ==========================================================================
+  windows-toolbox:
+    name: Windows · 绿色工具箱（w64devkit + Ninja）
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 下载 w64devkit 1.23.0 + Ninja 1.13.2，解到 C:\kit
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path C:\kit | Out-Null
+
+          Invoke-WebRequest -Uri "https://github.com/skeeto/w64devkit/releases/download/v1.23.0/w64devkit-1.23.0.zip" -OutFile "$env:RUNNER_TEMP\w64devkit.zip"
+          # zip 顶层已经是 w64devkit/ 这一层目录：解到 C:\kit 下面（不是 C:\kit\w64devkit 下面），
+          # 那一层目录本身展开出来正好就是 C:\kit\w64devkit，bin 就落在 C:\kit\w64devkit\bin。
+          Expand-Archive -Path "$env:RUNNER_TEMP\w64devkit.zip" -DestinationPath "C:\kit" -Force
+
+          Invoke-WebRequest -Uri "https://github.com/ninja-build/ninja/releases/download/v1.13.2/ninja-win.zip" -OutFile "$env:RUNNER_TEMP\ninja-win.zip"
+          # ninja 的 zip 里直接是 ninja.exe，没有顶层目录，直接解到 C:\kit\ninja 就行。
+          Expand-Archive -Path "$env:RUNNER_TEMP\ninja-win.zip" -DestinationPath "C:\kit\ninja" -Force
+
+          Add-Content $env:GITHUB_PATH "C:\kit\w64devkit\bin"
+          Add-Content $env:GITHUB_PATH "C:\kit\ninja"
+
+      - name: 确认工具链版本
+        shell: pwsh
+        run: |
+          gcc --version | Select-Object -First 1
+          g++ --version | Select-Object -First 1
+          ninja --version
+
+      - name: 依赖源码抓进 vendor/（Windows 上 FetchContent 拉 git 比较慢，先缓存源码）
+        shell: pwsh
+        run: python scripts/vendor.py
+
+      - name: 配置（Easel 根目录的 CMakePresets.json 里本来就有 mingw 预设，直接用它）
+        shell: pwsh
+        run: cmake --preset mingw
+
+      - name: 构建（easel、workbench、examples、tests 全部目标）
+        shell: pwsh
+        run: cmake --build build/mingw --parallel
+
+      - name: 测试
+        shell: pwsh
+        run: ctest --test-dir build/mingw --output-on-failure
+
+      - name: 无头验证：工作台建工程 + creative 示例 --doctor（两条命令都不开窗口）
+        shell: cmd
+        run: |
+          mkdir "%TEMP%\np"
+          build\mingw\workbench.exe --new "%TEMP%\np" --name 测试作品 --full
+          build\mingw\examples\creative\easel_example_creative.exe --doctor
+
+      - name: DX11 · MinGW，允许失败
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          cmake -S . -B build/mingw-dx11 -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ -DEASEL_BACKEND=dx11
+          cmake --build build/mingw-dx11 --target easel
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-mingw-bin
+          path: |
+            build/mingw/workbench.exe
+            build/mingw/easel_tests.exe
+            build/mingw/examples/sort/easel_example_sort.exe
+            build/mingw/examples/creative/easel_example_creative.exe
+          retention-days: 14

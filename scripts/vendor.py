@@ -24,6 +24,11 @@ import sys
 import tarfile
 import urllib.request
 
+# Windows 上标准输出默认 cp1252，打中文会炸；统一成 UTF-8（Python 3.7+）
+for _s in (sys.stdout, sys.stderr):
+    if hasattr(_s, "reconfigure"):
+        _s.reconfigure(encoding="utf-8", errors="replace")
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CMAKELISTS = os.path.join(ROOT, "CMakeLists.txt")
 

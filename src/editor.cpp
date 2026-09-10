@@ -85,6 +85,23 @@ std::string firstExisting(const std::vector<std::string>& cands) {
     return {};
 }
 
+}  // namespace
+
+// looksLikeProject 要给 tests/test_editor.cpp 直接调，不能待在匿名命名空间里
+// （声明在 internal.h）。
+//
+// 注意：判定用的是 app.cpp **和** solver.cpp 都在，不是「或」——Easel 仓库自己的
+// src/ 底下就有一个 app.cpp（库内部实现 App 类的那个，凑巧同名），只查 app.cpp
+// 或只查「两者之一」都会把 easel 仓库自己误判成工程目录。solver.cpp 才是唯一只
+// 在学生工程里出现的文件，但单独查它又太窄（万一以后有模板没有 solver.cpp），
+// 所以两个都要，这样才能真正把 easel 仓库自己的 src/ 排除掉。
+bool looksLikeProject(const std::string& dir) {
+    if (dir.empty()) return false;
+    return existsU8(joinPath(dir, "src/app.cpp")) && existsU8(joinPath(dir, "src/solver.cpp"));
+}
+
+namespace {
+
 void resolvePaths(Ed& e) {
     if (e.pathsResolved) return;
     e.pathsResolved = true;
@@ -111,10 +128,19 @@ void resolvePaths(Ed& e) {
     //              ④ 全没有就用当前目录。
     //   Easel 源码 ← 编译期常量不在了就从 exe 往上翻找 easel/ 目录（见下面那段）。
     // 「导出源码」（--export）和 F9 编辑栏认的就是这两个值。
+    // 光看候选目录底下有没有 src/ 不够严——比如从 easel 仓库根目录起进程时，仓库自己
+    // 的 src/ 也存在，会把 projectDir 错判成 easel 本身。所以每个候选都要过
+    // looksLikeProject()：目录底下得同时有 src/app.cpp 和 src/solver.cpp 才算数
+    // （easel 仓库的 src/ 有 app.cpp 但没有 solver.cpp，缺一不可）。顺序不变，仍是
+    // cwd 优先。
     std::string cwd = fs::cwd();
-    e.paths.projectDir = firstExisting({joinPath(cwd, "src"), joinPath(compiledProject, "src"),
-                                        joinPath(fs::dirOf(exeDir()), "src")});
-    if (!e.paths.projectDir.empty()) e.paths.projectDir = fs::dirOf(e.paths.projectDir);
+    e.paths.projectDir.clear();
+    for (const std::string& cand : {cwd, compiledProject, fs::dirOf(exeDir())}) {
+        if (!cand.empty() && looksLikeProject(cand)) {
+            e.paths.projectDir = cand;
+            break;
+        }
+    }
     if (e.paths.projectDir.empty()) e.paths.projectDir = cwd;
 
     e.paths.easelDir = firstExisting({compiledEasel, joinPath(e.paths.projectDir, "easel"),

@@ -20,6 +20,11 @@ import subprocess
 import sys
 import zipfile
 
+# Windows 上标准输出默认 cp1252，打中文会炸；统一成 UTF-8（Python 3.7+）
+for _s in (sys.stdout, sys.stderr):
+    if hasattr(_s, "reconfigure"):
+        _s.reconfigure(encoding="utf-8", errors="replace")
+
 # 源码包里要装什么。子目录会整个拷进去（build 之类在 SKIP 里排掉）。
 SOURCE_ITEMS = ["src", "tests", "data", "assets", "debug",
                 "CMakeLists.txt", "CMakePresets.json", "README.md",
