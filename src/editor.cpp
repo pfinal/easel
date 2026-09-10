@@ -155,15 +155,20 @@ void resolvePaths(Ed& e) {
     // GLFW chdir 污染，这条路径不受影响，下面的候选顺序也没变。
 
     // Easel 源码：「就近优先」——运行时看得见的东西打败编译期常量。
-    //   ① 从 exe 往上翻几层找 easel/ 源码树（跟 toolchain.cpp 找绿色工具箱是同一套
+    //   ① macOS .app bundle 布局（仅 __APPLE__ 下编译）：exeDir() 是
+    //      .../Contents/MacOS，源码树收在 .../Contents/Resources/easel/ 里（A 节，
+    //      macOS 发布包不再是 <包根>/Easel.app 和 <包根>/easel/ 并排——包根摆一个
+    //      60MB 的 easel/ 目录不像个正常 Mac 应用，现在整棵源码树 + prebuilt/ 都
+    //      收进 app 内部）。这条必须排在下一条前面：下一条会往上翻好几层，bundle
+    //      场景下翻上去就是 /Applications，运气不好会撞见别的同名目录；
+    //   ② 从 exe 往上翻几层找 easel/ 源码树（跟 toolchain.cpp 找绿色工具箱是同一套
     //      办法：工具箱布局是 <工具箱>/easel/ 和 w64devkit/ cmake/ ninja/ 并排，
-    //      macOS 发布包是 <包根>/Easel.app 和 <包根>/easel/ 并排，都是「往上翻能找到
-    //      跟 easel/ 并排的东西」，几层就到）；
-    //   ② toolchain().kit（findCxx() 顺路翻出来的工具箱根目录，省一遍遍历；Mac 包没
+    //      源码构建 / 非 bundle 场景走这条，几层就到）；
+    //   ③ toolchain().kit（findCxx() 顺路翻出来的工具箱根目录，省一遍遍历；Mac 包没
     //      有 w64devkit/，kit 会是空，下面判空跳过就好，不算错误）；
-    //   ③ 工程目录旁边（开发时常见摆法：workspace/easel + workspace/myproject，源码
+    //   ④ 工程目录旁边（开发时常见摆法：workspace/easel + workspace/myproject，源码
     //      构建、非顶层 add_subdirectory 走这条）；
-    //   ④ 编译期常量 EASEL_SOURCE_DIR 垫底——它只在「源码构建 easel 本身」这条路上
+    //   ⑤ 编译期常量 EASEL_SOURCE_DIR 垫底——它只在「源码构建 easel 本身」这条路上
     //      才指向正确的地方；预编译包发布出去之后，这个编译期常量在别人机器上要么
     //      不存在，要么指向打包那台机器上的路径（这次事故就是指到了打包机的仓库）。
     // 每个候选都要经过同一套「真源码树」判定：<候选>/CMakeLists.txt 和
@@ -176,7 +181,12 @@ void resolvePaths(Ed& e) {
     e.paths.easelDir.clear();
     {
         std::vector<std::string> dirs;
-        std::string              dir = exeDir();
+#if defined(__APPLE__)
+        // bundle 布局排第一（见上面①）：exeDir() = .../Contents/MacOS，源码树是
+        // .../Contents/Resources/easel，常数层级，不用翻找。
+        dirs.push_back(joinPath(fs::dirOf(exeDir()), "Resources/easel"));
+#endif
+        std::string dir = exeDir();
         for (int up = 0; up < 6 && !dir.empty(); ++up) {
             dirs.push_back(joinPath(dir, "easel"));
             std::string parent = fs::dirOf(dir);

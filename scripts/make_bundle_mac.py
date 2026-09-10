@@ -9,21 +9,35 @@ scripts/make_toolbox.py 组装），但 macOS 上不内置 cmake/ninja/编译器
 产出 build/pack/Easel-<版本>-macos/（以及同名 .zip）：
 
     Easel-0.1.1-macos/
-    ├── Easel.app                 本机编的（EASEL_MACOS_BUNDLE=ON + Release），已 ad-hoc 签名
+    ├── Easel.app/                本机编的（EASEL_MACOS_BUNDLE=ON + Release），已 ad-hoc 签名
+    │   └── Contents/
+    │       ├── MacOS/Easel       可执行文件
+    │       ├── easel             → 软链到 MacOS/Easel（命令行入口，小写好敲）
+    │       ├── Resources/Easel.icns
+    │       ├── Resources/easel/  源码树 + prebuilt/（cmake --install 的 prefix）+ VERSION.json
+    │       └── Info.plist
     ├── README.txt
     ├── LICENSE.txt
-    ├── licenses/                 vendor/*/LICENSE* 收的三方许可证
-    └── easel/
-        ├── prebuilt/             cmake --install 的 prefix（本机 clang 编的）
-        ├── VERSION.json
-        ├── CMakeLists.txt cmake/ include/ src/ vendor/ assets/ LICENSE
-        ├── dist/                 摊平的单头库 easel.hpp（solver.cpp / --new 生成的工程都要它）
-        └── template/ template-hello/ examples/ docs/
+    └── licenses/                 vendor/*/LICENSE* 收的三方许可证
 
-脚本自己负责：配置 + Release 构建 easel_workbench、cmake --install 到 easel/prebuilt、
-拷源码树、写 VERSION.json、收许可证、ad-hoc 签名、（默认）打 zip。
+包根不再放 easel/ 源码树——整个都收进 Easel.app 内部了（一个 60MB 的目录跟 .app
+并排，看起来不像个正常的 Mac 应用；D-26 的绿色工具箱布局本来是照顾 Windows 那种
+「解压即用、没有安装步骤」的心智模型，macOS 上直接用 .app 自己的容器就够）。
+
+命令行软链放在 Contents/ 这一级，**不是** Contents/MacOS/（跟 Easel 可执行文件同级）——
+实测过：Mac 默认的文件系统（APFS/HFS+）大小写不敏感但大小写保留，同一目录里 "easel"
+和 "Easel" 是同一个目录项，在 Contents/MacOS/ 下建 easel -> Easel 这条软链会直接把
+可执行文件 Easel 顶掉，变成一个自己指向自己的死链接（双击/命令行会报「Too many
+levels of symbolic links」）。Contents/ 这一级没有任何叫 Easel 的东西，不会撞。
+
+脚本自己负责：配置 + Release 构建 easel_workbench、把源码树 + cmake --install 的
+prefix + VERSION.json 全拷进 Contents/Resources/easel/、收许可证、建
+Contents/easel 软链、（都弄完之后才）ad-hoc 签名、（默认）打 zip。
 
 **要在 macOS 上跑**（Easel.app 是本机编译器编的，不可能在别的平台上产出）。
+**签名顺序要紧**：codesign 必须放在所有内容都拷进 Contents/ 之后——ad-hoc 签名是
+对整个 bundle（包括 Resources/ 底下新增的 easel/ 源码树、prebuilt/）签的，签完后
+再改动 Contents/ 下任何文件都会让签名失效。
 """
 import argparse
 import json
@@ -50,17 +64,19 @@ if sys.platform != "darwin":
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# 打进 <包>/easel/ 的东西。比 Windows 工具箱那份少了 CMakePresets.json / scripts / workbench /
-# tests / README.md —— 学生工程走的是 --new 生成的 .easel/CMakeLists.txt（直接
-# -DEASEL_DIR=<路径>），不需要 Easel 自己的 preset 或工作台源码；但 dist/（单头库
-# easel.hpp 摊平版）必须带上，src/new_project.cpp 生成的 CMakeLists 里
-# EASEL_CORE_DIR = ${EASEL_DIR}/dist，solver.cpp #include "easel.hpp" 就是从这里找。
+# 打进 <Easel.app>/Contents/Resources/easel/ 的东西。比 Windows 工具箱那份少了
+# CMakePresets.json / scripts / workbench / tests / README.md —— 学生工程走的是
+# --new 生成的 .easel/CMakeLists.txt（直接 -DEASEL_DIR=<路径>），不需要 Easel 自己的
+# preset 或工作台源码；但 dist/（单头库 easel.hpp 摊平版）必须带上，
+# src/new_project.cpp 生成的 CMakeLists 里 EASEL_CORE_DIR = ${EASEL_DIR}/dist，
+# solver.cpp #include "easel.hpp" 就是从这里找。
 EASEL_ITEMS = ["CMakeLists.txt", "LICENSE", "cmake", "include", "src", "vendor", "assets",
                "dist", "template", "template-hello", "examples", "docs"]
 
 README_TXT = """Easel {version} · macOS 发布包
 
-双击 Easel.app 打开工作台（第一次可能要右键 -> 打开，绕开「无法验证开发者」提示）。
+把 Easel.app 拖进「应用程序」（/Applications）即可，双击打开工作台（第一次可能
+要右键 -> 打开，绕开「无法验证开发者」提示）。
 
 第一次用之前，先在终端里装好 Xcode 命令行工具：
     xcode-select --install
@@ -68,11 +84,13 @@ README_TXT = """Easel {version} · macOS 发布包
 新建的工程默认放在 ~/projects（工程名只能用英文字母/数字/下划线）。
 
 打不开、或者画面不对，在终端里跑（把输出发给维护者）：
-    Easel.app/Contents/MacOS/Easel --doctor
+    /Applications/Easel.app/Contents/MacOS/Easel --doctor
 
-命令行用法（Easel.app/Contents/ 下有个 easel 软链，指向上面那个可执行文件，
-两种写法都行——包根没放这个软链，因为那个位置已经被 easel/ 源码树目录占了）：
-    ./Easel.app/Contents/easel --doctor
+命令行用法（Contents/ 下有个 easel 软链，指向 Contents/MacOS/Easel，两种写法都行）：
+    /Applications/Easel.app/Contents/easel --build ~/projects/Demo
+
+想更好敲，可以自己软链到 /usr/local/bin：
+    ln -s /Applications/Easel.app/Contents/easel /usr/local/bin/easel
 """
 
 # 不内置 cmake/ninja（Windows 版工具箱带，这份不带）——不管打包这台机器上有没有
@@ -208,34 +226,26 @@ def main():
         print(f"[发布包] 编完没找到 {app_src}——EASEL_MACOS_BUNDLE 没生效？", file=sys.stderr)
         return 2
 
-    if os.path.isdir(out_root):
-        shutil.rmtree(out_root)
+    shutil.rmtree(out_root, ignore_errors=True)
     os.makedirs(out_root)
 
-    print("=== 3/6 装 Easel.app（ditto，保住符号链接/权限）+ ad-hoc 签名 ===")
+    print("=== 3/6 装 Easel.app（ditto，保住符号链接/权限）===")
     app_dest = os.path.join(out_root, "Easel.app")
     run(["ditto", app_src, app_dest])
-    # Apple Silicon 上没签名连右键「打开」都不行；ad-hoc（-s -）不需要开发者证书。
-    run(["codesign", "--force", "--deep", "-s", "-", app_dest])
-    # 命令行友好的软链：easel -> Easel.app/Contents/MacOS/Easel。
-    # 注意不能叫 <out_root>/easel —— 那个名字已经被第 4 步的 Easel 源码树目录占了
-    # （editor.cpp 的 resolvePaths() 运行时会在 exe 旁边找一个叫 easel/ 的目录，
-    # 里面要有 CMakeLists.txt + include/easel/easel.h，「导出源码」「新建工程」都
-    # 靠它；如果把这个目录换成指向可执行文件的软链，这两个功能会直接找不到源码树）。
-    # 软链改放进 Easel.app 内部（Contents/MacOS/ 旁边不会跟任何东西撞名）。
-    os.symlink("MacOS/Easel", os.path.join(app_dest, "Contents", "easel"))
+    # 先不签名——Resources/easel/（源码树 + prebuilt/）还没拷进去，签早了后面一改
+    # Contents/ 下的内容签名就失效了。签名放在第 5 步，所有内容拷完之后。
 
-    print("=== 4/6 源码树 ===")
+    print("=== 4/6 源码树 + prebuilt 装进 Contents/Resources/easel/ ===")
+    resources_easel = os.path.join(app_dest, "Contents", "Resources", "easel")
     # 顺序要紧：copy_easel_tree() 会先 rmtree 整个 easel/ 再重建，所以必须先拷源码树，
     # 再 cmake --install 到 easel/prebuilt——反过来的话装好的预编译包会被这一步删掉
     # （曾经真的这么写过：装完预编译包，下一步把 easel/ 整个删了重建，prebuilt/ 一起没了，
     # 学生工程找不到 easelConfig.cmake，只能退回源码编，三分钟而不是几秒钟）。
-    missing = copy_easel_tree(os.path.join(out_root, "easel"))
+    missing = copy_easel_tree(resources_easel)
     if missing:
         print(f"  （跳过不存在的：{', '.join(missing)}）")
 
-    print("=== 5/6 cmake --install 到 easel/prebuilt + VERSION.json + licenses ===")
-    prebuilt_dir = os.path.join(out_root, "easel", "prebuilt")
+    prebuilt_dir = os.path.join(resources_easel, "prebuilt")
     run(["cmake", "--install", build_dir, "--prefix", prebuilt_dir])
     print(f"    {dir_size(prebuilt_dir)/1e6:.0f} MB")
 
@@ -247,8 +257,24 @@ def main():
     if os.path.exists(prebuilt_stamp):
         with open(prebuilt_stamp, encoding="utf-8") as f:
             abi = json.load(f).get("abi", "unknown")
-    write_version_json(os.path.join(out_root, "easel", "VERSION.json"), commit, abi)
-    print(f"  源码戳 → easel/VERSION.json（commit {commit or 'unknown'}，abi {abi}）")
+    write_version_json(os.path.join(resources_easel, "VERSION.json"), commit, abi)
+    print(f"  源码戳 → Resources/easel/VERSION.json（commit {commit or 'unknown'}，abi {abi}）")
+
+    print("=== 5/6 命令行软链 + ad-hoc 签名（要放在所有内容拷完之后，否则签名失效）===")
+    # 命令行友好的软链：easel -> MacOS/Easel。放在 Contents/ 这一级而不是 Contents/MacOS/
+    # 下——Mac 文件系统大小写不敏感但保留大小写，同一目录里 "easel" 和 "Easel" 是同一个
+    # 目录项，在 Contents/MacOS/ 下建 easel -> Easel 会直接把可执行文件 Easel 顶掉，变成
+    # 自己指向自己的死链（报「Too many levels of symbolic links」）。Contents/ 下没有任何
+    # 叫 Easel 或 MacOS 的东西，不会撞（MacOS 是目录，不是文件，不算目录项）。
+    easel_link = os.path.join(app_dest, "Contents", "easel")
+    if os.path.islink(easel_link) or os.path.exists(easel_link):
+        os.remove(easel_link)
+    os.symlink("MacOS/Easel", easel_link)
+    # Apple Silicon 上没签名连右键「打开」都不行；ad-hoc（-s -）不需要开发者证书。
+    # --deep 会把 bundle 里任何嵌套的可执行文件/bundle 也一起签一遍；这一步必须在
+    # 上面所有拷贝/写文件动作之后，否则签完名再改 Contents/ 下的内容，Gatekeeper
+    # 校验时会发现内容跟签名不一致（对得上 CodeResources 里的哈希才算数）。
+    run(["codesign", "--force", "--deep", "-s", "-", app_dest])
 
     shutil.copy2(os.path.join(ROOT, "LICENSE"), os.path.join(out_root, "LICENSE.txt"))
     nlic = collect_licenses(os.path.join(out_root, "licenses"))

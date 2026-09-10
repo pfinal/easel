@@ -60,11 +60,24 @@ endif()
 # 两个 abi 都读到且不一样才改道；VERSION.json 没有 abi 字段（旧包）就退回比 commit；
 # 有一边什么都读不到就是没法核对，照旧信预编译包。
 set(EASEL_PREBUILT_OK TRUE)
+# 预编译包可能在两个位置：<EASEL_DIR>/prebuilt（发布包 / make_toolbox.py 装的位置，
+# 普通学生走这条）；或 <EASEL_DIR>/build/default/prebuilt（开发机在 easel 仓库根目录
+# 跑 `cmake --build build/default --target prebuilt` 装的位置——这时 EASEL_DIR 指向
+# 仓库根，仓库根目录本身没有 prebuilt/，产物在 build/default/ 这个 CMakePresets.json
+# 约定的 binaryDir 底下）。两个都探测一遍，前者优先（更常见，也是发布包的真实布局）。
+set(_easel_prebuilt_root "")
+if(DEFINED EASEL_DIR)
+  if(EXISTS "${EASEL_DIR}/prebuilt/lib/cmake/easel/easelConfig.cmake")
+    set(_easel_prebuilt_root "${EASEL_DIR}/prebuilt")
+  elseif(EXISTS "${EASEL_DIR}/build/default/prebuilt/lib/cmake/easel/easelConfig.cmake")
+    set(_easel_prebuilt_root "${EASEL_DIR}/build/default/prebuilt")
+  endif()
+endif()
 if(DEFINED EASEL_DIR)
   set(_easel_prebuilt_abi "")
   set(_easel_prebuilt_commit "")
-  if(EXISTS "${EASEL_DIR}/prebuilt/easel-prebuilt.json")
-    file(READ "${EASEL_DIR}/prebuilt/easel-prebuilt.json" _easel_pb_json)
+  if(_easel_prebuilt_root AND EXISTS "${_easel_prebuilt_root}/easel-prebuilt.json")
+    file(READ "${_easel_prebuilt_root}/easel-prebuilt.json" _easel_pb_json)
     string(JSON _easel_prebuilt_abi ERROR_VARIABLE _easel_pb_abi_err GET "${_easel_pb_json}" abi)
     if(_easel_pb_abi_err)
       set(_easel_prebuilt_abi "")
@@ -141,11 +154,12 @@ if(DEFINED EASEL_DIR)
 endif()
 
 # 三条路，从快到慢：
-#   1. 工具箱里的预编译包 <工具箱>/easel/prebuilt/ —— 几秒钟链上，默认走的就是这条
+#   1. 预编译包 <EASEL_DIR>/prebuilt/ 或 <EASEL_DIR>/build/default/prebuilt/（见上面
+#      _easel_prebuilt_root 怎么探测）—— 几秒钟链上，默认走的就是这条
 #   2. Easel 源码树 —— 头一回要连 ImGui/GLFW 一起编，三分钟起步（改 Easel 本身时用）
 #   3. 两样都没有，上网拉一份
-if(DEFINED EASEL_DIR AND EASEL_PREBUILT_OK AND EXISTS "${EASEL_DIR}/prebuilt/lib/cmake/easel/easelConfig.cmake")
-  set(easel_DIR "${EASEL_DIR}/prebuilt/lib/cmake/easel")
+if(DEFINED EASEL_DIR AND EASEL_PREBUILT_OK AND _easel_prebuilt_root)
+  set(easel_DIR "${_easel_prebuilt_root}/lib/cmake/easel")
   find_package(easel CONFIG REQUIRED)
   message(STATUS "用预编译的 Easel: ${easel_DIR}")
 elseif(DEFINED EASEL_DIR)

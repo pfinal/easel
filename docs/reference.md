@@ -639,6 +639,12 @@ App 内置的（构造 `App` 时自动解析）：
 | `easel --package <工程目录> [--json]` | Release 构建 + 收进 `dist/<名字>-release/` | `easel --package ~/projects/Demo` |
 | `easel --export <工程目录> --out <目录> [--json]` | 导出一个能独立编译的完整工程 | `easel --export ~/projects/Demo --out ~/out` |
 
+**在 Easel 仓库自己的开发机上**（不是发布包/工具箱），`--new` 建的工程默认会从源码编
+ImGui/GLFW（头一回 3 分钟）。先跑一次 `cmake --build build/default --target prebuilt`
+（等价于 `cmake --install build/default --prefix build/default/prebuilt`，需要
+`EASEL_INSTALL=ON`，顶层配置默认就是开的），装出 `build/default/prebuilt/`；
+之后 `--new` 生成的工程会自动探测到它并链上预编译库，几秒钟编完，不用再等。
+
 退出码：成功 0，失败 1；`--run` 编译失败时也是 1（作品没机会跑），编译成功后
 退出码 = 作品自己的退出码。
 

@@ -467,6 +467,24 @@ if(EASEL_INSTALL)
     string(TIMESTAMP _easel_prebuilt_date \"%Y-%m-%dT%H:%M:%SZ\" UTC)
     file(WRITE \"\${CMAKE_INSTALL_PREFIX}/easel-prebuilt.json\" \"{\\\"version\\\":\\\"${PROJECT_VERSION}\\\",\\\"commit\\\":\\\"${EASEL_GIT_SHA}\\\",\\\"abi\\\":\\\"${EASEL_ABI}\\\",\\\"compiler\\\":\\\"${EASEL_BUILT_WITH}\\\",\\\"system\\\":\\\"${CMAKE_SYSTEM_NAME}\\\",\\\"date\\\":\\\"\${_easel_prebuilt_date}\\\"}\")
   ")
+
+  # ---- `prebuilt` 目标：开发机本地用（B 节）--------------------------------
+  # 新建工程时 EASEL_DIR 常指向仓库根（开发时常见摆法），src/new_project.cpp 的
+  # kCMake 会去探测 ${EASEL_DIR}/build/default/prebuilt/ 这个约定位置（build/default
+  # 是 CMakePresets.json 的默认 binaryDir）。这条目标就是把上面一整套 install 规则
+  # 跑到 ${CMAKE_BINARY_DIR}/prebuilt，等价于手写
+  # `cmake --install ${CMAKE_BINARY_DIR} --prefix ${CMAKE_BINARY_DIR}/prebuilt`。
+  # 装好之后新建工程默认几秒钟链上，不用再等三分钟从源码编 ImGui/GLFW。
+  add_custom_target(prebuilt
+    COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --prefix ${CMAKE_BINARY_DIR}/prebuilt
+    DEPENDS easel
+    COMMENT "装到 ${CMAKE_BINARY_DIR}/prebuilt（本地开发用，新建工程会自动探测到它）")
+else()
+  # EASEL_INSTALL=OFF 时没有 install 规则，装不出任何东西——打一句提示而不是报错，
+  # 免得 add_subdirectory 进来的场景（EASEL_INSTALL 默认就是 OFF）平白多一个失败目标。
+  add_custom_target(prebuilt
+    COMMAND ${CMAKE_COMMAND} -E echo
+            "Easel: EASEL_INSTALL=OFF，没有 install 规则，打不出 prebuilt/（用顶层默认配置重新 cmake，或手动 -DEASEL_INSTALL=ON）")
 endif()
 
 # ============================================================================
@@ -484,9 +502,14 @@ endif()
 # （命令行输入友好的小写名，Windows 上是 easel.exe）。macOS bundle 是例外：bundle
 # 目录名跟着 OUTPUT_NAME 走，产品名「Easel」不能因为这次改名变成 easel.app，所以
 # EASEL_MACOS_BUNDLE=ON 时仍用大写 Easel（可执行文件落在 Contents/MacOS/Easel）。
-# scripts/make_bundle_mac.py 额外在 Contents/ 下做了个 easel -> MacOS/Easel 的软链
-# （不能放在包根：包根的 easel/ 这个名字已经被 Easel 源码树目录占了），
-# 命令行想用小写就 ./Easel.app/Contents/easel。
+# scripts/make_bundle_mac.py 额外在 Contents/ 下做了个 easel -> MacOS/Easel 的软链，
+# 命令行想用小写就 ./Easel.app/Contents/easel。注意软链不能跟 Easel 放同一个目录
+# （即 Contents/MacOS/easel 这种写法）——实测过：Mac 默认的 APFS/HFS+ 是大小写不敏感
+# 但大小写保留的文件系统，同一目录里 "easel" 和 "Easel" 是同一个目录项，创建这个软链
+# 会把原来的可执行文件 Easel 直接顶掉（或者更糟：软链自己解析回自己，形成死循环，
+# 打开时报「Too many levels of symbolic links」）。放在 Contents/ 这一级就没事——
+# 那一级没有任何东西叫 Easel（大小写不敏感意义上），跟 Contents/Resources/easel/
+# 源码树也不会撞（那是另一个目录）。
 option(EASEL_BUILD_WORKBENCH "编译工作台" ${EASEL_IS_TOP})
 if(EASEL_BUILD_WORKBENCH)
   add_executable(easel_workbench workbench/main.cpp)
