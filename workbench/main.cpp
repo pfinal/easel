@@ -66,12 +66,28 @@ const char* presetName() {
 #endif
 }
 
-// 新建工程对话框的默认父目录：Windows 上 D:\ 存在就用 D:\projects（不存在没关系，
-// createProject 会建），免得学生把工程建到 C 盘用户名带中文的路径下；其它平台用 cwd（D-36）。
-std::string defaultParentDir() {
+// 新建工程对话框的默认父目录逻辑（D-36）：
+// Windows：D:\ 存在 → D:\projects；否则 USERPROFILE\projects；再否则 cwd
+// 其他平台：HOME/projects；拿不到 HOME 就 cwd
+std::string defaultProjectsDir() {
 #if defined(_WIN32)
+    // Windows: 优先 D:\projects
     if (isDirU8("D:\\")) return "D:\\projects";
+
+    // 次选：USERPROFILE\projects
+    const char* userProfile = std::getenv("USERPROFILE");
+    if (userProfile && userProfile[0]) {
+        return joinPath(userProfile, "projects");
+    }
+#else
+    // 非 Windows：优先 HOME/projects
+    const char* home = std::getenv("HOME");
+    if (home && home[0]) {
+        return joinPath(home, "projects");
+    }
 #endif
+
+    // 备选方案：cwd
     return fs::cwd();
 }
 
@@ -491,7 +507,7 @@ void draw(const Rect& r, const Theme& th, float dpi) {
     bool busy = w.proc.running();
     if (ImGui::Button("新建工程…")) {
         if (!w.newParent[0])
-            std::snprintf(w.newParent, sizeof w.newParent, "%s", defaultParentDir().c_str());
+            std::snprintf(w.newParent, sizeof w.newParent, "%s", defaultProjectsDir().c_str());
         ImGui::OpenPopup("新建工程");
     }
     ImGui::SameLine();

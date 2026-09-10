@@ -59,7 +59,7 @@ README_TXT = """Easel {version} · macOS 发布包
 第一次用之前，先在终端里装好 Xcode 命令行工具：
     xcode-select --install
 {cmake_note}
-新建工程时建议放在 ~/projects 之类的目录下（工程名只能用英文字母/数字/下划线）。
+新建的工程默认放在 ~/projects（工程名只能用英文字母/数字/下划线）。
 
 打不开、或者画面不对，在终端里跑（把输出发给维护者）：
     Easel.app/Contents/MacOS/Easel --doctor
