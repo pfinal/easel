@@ -282,9 +282,12 @@ struct NewProjectOptions {
     std::string parentDir;   // 建到哪个目录下
     std::string name;        // 作品名 = 目录名
     bool        withTests = false;    // 带一个 tests/test_solver.cpp（默认不带，要写测试再说）
-    // 骨架：false = 空工程（两个文件，画个 Hello，D-32）
-    //       true  = 完整骨架（读数据文件、逐帧回放、收敛曲线、导出用例）
+    // 骨架：false = 空工程（一个文件，画个 Hello，D-32 / D-36）
+    //       true  = 算法骨架（读数据文件、逐帧回放、收敛曲线、导出用例）
     bool        fullSkeleton = false;
+    // 非空 = 从 <exampleDir>/main.cpp 建（单文件示例拷成 src/app.cpp，
+    // exampleDir/assets、exampleDir/data 有就带上）。和 fullSkeleton 互斥（D-36）。
+    std::string exampleDir;
 };
 struct NewProjectReport {
     bool        ok = false;
@@ -300,7 +303,7 @@ struct ExportReport {
     long long                bytes = 0;
     std::vector<std::string> checks;    // 每条以 [√] / [×] / [!] 开头
     std::string              error;
-    std::string              checklist;  // 写进 导出自检.txt 的全文
+    std::string              checklist;  // 写进 CHECK.txt 的全文
 };
 ExportReport exportProject(const ExportOptions& opt);
 

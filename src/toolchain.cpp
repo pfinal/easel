@@ -1,6 +1,6 @@
 // Easel — toolchain.cpp  「运行」按钮要用的那个 g++ 到底在哪
 //
-// 学生双击 app.exe 的时候，PATH 里是没有 w64devkit 的（那是 启动.bat 干的活）。
+// 学生双击 app.exe 的时候，PATH 里是没有 w64devkit 的（那是 start.bat 干的活）。
 // 所以不能只查 PATH：还要顺着 exe 往上找工具箱。找不到就明说下一步怎么办，
 // 别让学生对着一个灰按钮发呆。
 #include "internal.h"
@@ -182,7 +182,7 @@ void findCxx() {
 
     g_tc.note =
 #if defined(_WIN32)
-        "没找到 g++。用工具箱里的 启动.bat 打开这个程序，或者把 w64devkit\\bin 加进 PATH。";
+        "没找到 g++。用工具箱里的 start.bat 打开这个程序，或者把 w64devkit\\bin 加进 PATH。";
 #else
         "没找到 g++。Mac 上跑一次 xcode-select --install；Linux 上装 g++。";
 #endif

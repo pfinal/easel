@@ -29,55 +29,25 @@
 
 ## 最小示例
 
+这就是空白工程 `src/app.cpp` 的全部内容（Workbench →「新建工程」→ 骨架：空白）：
+
 ```cpp
 #include <easel/easel.h>
 using namespace easel;
 
-struct State {
-    int    count = 8;
-    double radius = 20.0;
-    std::vector<Vec2> points;
-};
-State S;
-
-void solve() {
-    S.points.clear();
-    for (int i = 0; i < S.count; ++i) {
-        double a = 2 * 3.14159265358979 * i / S.count;
-        S.points.push_back({std::cos(a) * S.radius, std::sin(a) * S.radius});
-    }
-}
-
 int main(int argc, char** argv) {
     App app(argc, argv);
-    app.title("Hello, Easel").size(1280, 800).theme(Theme::Forest());
-
-    app.onStart([&app] {
-        solve();
-        app.camera().fit(Rect::bounding(S.points), 80);
-    });
-
-    app.onDraw([&](Canvas& c) {
-        c.stroke(app.theme().accent, 2);
-        c.polyline(S.points, true);
-        c.fill(app.theme().accent);
-        for (const Vec2& p : S.points) c.dot(p, 6);
-        c.fill(app.theme().fg);
+    app.title("MySketch");
+    app.onDraw([](Canvas& c) {
         c.text({0, 0}, "Hello, Easel", Align::Center);
     });
-
-    app.onPanel([] {
-        if (ui::section("参数")) {
-            if (ui::slider("点数", &S.count, 3, 40)) solve();
-            if (ui::slider("半径", &S.radius, 5.0, 60.0)) solve();
-        }
-    });
-
     return app.run();
 }
 ```
 
-运行后会看到一圈点和一行 "Hello" 文字；拖动滑块会重新计算。
+运行后画布正中间会有一行 "Hello, Easel"，别的什么都没有。
+想看一个稍微复杂一点、可交互的例子（一圈点 + 拖拽滑块），看
+[`examples/hello`](examples/hello) —— 新建工程对话框的「骨架」下拉里也有，叫「示例：hello」。
 
 ![Empty project](docs/screenshot-hello.png)
 
@@ -90,15 +60,15 @@ git clone https://github.com/pfinal/easel.git && cd easel
 cmake --preset default && cmake --build --preset default
 ```
 
-`./build/default/workbench` 会打开 Workbench："New Project" -> "Build & Run"。这需要 Xcode 命令行工具（`xcode-select --install`）和 CMake。
+`./build/default/Easel` 会打开 Workbench："New Project" -> "Build & Run"。这需要 Xcode 命令行工具（`xcode-select --install`）和 CMake。
 
 ### Windows
 
-有一个免安装工具箱，包含 gcc、cmake、ninja 和 Easel，由 `scripts/make_toolbox.py` 打包生成。解压后双击 `工作台.bat`（Workbench 启动器）。该工具箱的官方构建会随第一个发布版本一起提供。
+有一个免安装工具箱，包含 gcc、cmake、ninja 和 Easel，由 `scripts/make_toolbox.py` 打包生成。解压后双击 `Easel.bat`（Workbench 启动器）。该工具箱的官方构建会随第一个发布版本一起提供。
 
 ## Workbench
 
-New Project / Build & Run / Stop / Build exe / Export source。项目以独立进程运行；点击错误行会跳转到源码中对应的位置。新建的项目只有三个文件 —— `README.md`、`src/app.cpp`、`src/solver.cpp` —— 构建脚本和库本身放在 `.easel/` 里。
+New Project / Build & Run / Stop / Build exe / Export source。项目以独立进程运行；点击错误行会跳转到源码中对应的位置。空白工程只有一个文件 —— `src/app.cpp` —— 构建脚本放在 `.easel/` 里，单头库不拷贝，直接指到 Easel 自己的 `dist/`。「骨架」下拉还可以选算法骨架（数据文件、逐帧回放、收敛曲线）或者任意一个自带示例。作品名只能用英文（编译器对中文路径支持不好）。
 
 ![Workbench](docs/screenshot-workbench.png)
 
@@ -112,7 +82,7 @@ New Project / Build & Run / Stop / Build exe / Export source。项目以独立�
 
 - [`docs/reference.md`](docs/reference.md) —— 完整的参考手册，中文，附 Scratch / Processing / openFrameworks 的对照表。
 - [`docs/cheatsheet.md`](docs/cheatsheet.md) —— 一页速查表，中文。
-- [`examples/`](examples/) —— `sort`（排序可视化）、`creative`（万花筒 / 轨迹 / 噪声地形 / 序列帧动画 / 声音）。
+- [`examples/`](examples/) —— `hello`（一圈点 + 滑块，最小的可交互示例）、`sort`（排序可视化）、`creative`（万花筒 / 轨迹 / 噪声地形 / 序列帧动画 / 声音）。
 
 ## 从源码构建
 
@@ -132,9 +102,9 @@ ctest --preset default
 | `include/` | 公开头文件：`core.h`（无 GUI，零链接依赖）、`app.h`、`canvas.h`、`camera.h`、`timeline.h`、`ui.h`、`audio.h`、`theme.h`、`file.h` |
 | `src/` | 库的实现 |
 | `workbench/` | Workbench：新建项目 / 构建 / 运行 / 停止 / 构建 exe / 导出源码 |
-| `template/` | 带回放骨架的起始项目 |
-| `template-hello/` | 空项目模板 |
-| `examples/` | `sort` 和 `creative` 示例 |
+| `template/` | 算法骨架起始项目（数据文件、回放、收敛曲线） |
+| `template-hello/` | 空白项目模板（一个文件：`src/app.cpp`） |
+| `examples/` | `hello`、`sort`、`creative` 示例 |
 | `docs/` | 参考手册、速查表、截图 |
 | `scripts/` | `vendor.py`（离线依赖）、`make_toolbox.py`（Windows 工具箱）、`package.py`（发布打包） |
 | `windows-green/` | Windows 免安装工具箱的说明 |

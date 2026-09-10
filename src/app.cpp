@@ -105,6 +105,7 @@ struct App::Impl {
     bool   statusBar = false;   // 底部状态栏：默认关，F12 调试台打开时临时出现
     bool   editorOpen = false;
     bool   editorEnabled = true;
+    bool   debugConsoleEnabled = true;
     bool   runOnce = false;
     float  editorW = 560.f;
     bool   showImGuiDemo = false;
@@ -178,6 +179,11 @@ App& App::editorEnabled(bool on) {
     if (!on) p_->editorOpen = false;
     return *this;
 }
+App& App::debugConsoleEnabled(bool on) {
+    p_->debugConsoleEnabled = on;
+    if (!on) p_->debugOpen = false;
+    return *this;
+}
 App& App::editorFile(const std::string& path) {
     internal::setEditorFile(path);
     return *this;
@@ -223,7 +229,7 @@ void App::toast(const std::string& s) {
 }
 App& App::statusBar(bool on) { p_->statusBar = on; return *this; }
 
-App& App::debugConsoleOpen(bool on) { p_->debugOpen = on; return *this; }
+App& App::debugConsoleOpen(bool on) { p_->debugOpen = on && p_->debugConsoleEnabled; return *this; }
 bool App::debugConsoleOpen() const { return p_->debugOpen; }
 
 std::string App::exportDebugCase(const json& state, const std::string& note) {
@@ -244,6 +250,9 @@ void        App::quit() { p_->running = false; }
 std::string App::doctor() const {
     std::ostringstream o;
     o << doctorCore();
+#if defined(EASEL_GIT_SHA) && defined(EASEL_BUILT_WITH)
+    o << "Easel " << EASEL_VERSION << " · 提交 " << EASEL_GIT_SHA << " · " << EASEL_BUILT_WITH << "\n";
+#endif
     o << "  ---- 图形 ----\n";
     o << "  渲染后端    : " << internal::backend::name() << "\n";
     o << "  显卡        : " << internal::backend::gpu() << "\n";
@@ -487,7 +496,7 @@ int App::run() {
 
     internal::installHooks(true);   // 现在窗口有了，CHECK 可以弹红条而不是崩
     internal::startCapture();
-    if (cli::args().has("debug")) d.debugOpen = true;   // app --debug 直接把调试台打开
+    if (cli::args().has("debug") && d.debugConsoleEnabled) d.debugOpen = true;   // app --debug 直接把调试台打开
     // --edit / --run 只对开着编辑栏的程序有意义；工具类程序（工作台）把编辑栏关了，
     // 它自己的 --run 是另一个意思，别在这里抢走。
     if (d.editorEnabled) {
@@ -639,7 +648,7 @@ void App::frame() {
     }
 
     // ---------------- 键盘 ----------------
-    if (ImGui::IsKeyPressed(ImGuiKey_F12, false)) d.debugOpen = !d.debugOpen;
+    if (d.debugConsoleEnabled && ImGui::IsKeyPressed(ImGuiKey_F12, false)) d.debugOpen = !d.debugOpen;
     // F9 / F5 要在输入框里也管用，所以放在 WantCaptureKeyboard 判断之前
     if (d.editorEnabled) {
         if (ImGui::IsKeyPressed(ImGuiKey_F9, false)) d.editorOpen = !d.editorOpen;

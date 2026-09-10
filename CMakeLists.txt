@@ -11,7 +11,7 @@
 #      target_link_libraries(myapp PRIVATE easel::easel)
 # ============================================================================
 cmake_minimum_required(VERSION 3.20)
-project(easel VERSION 0.1.0 LANGUAGES CXX)
+project(easel VERSION 0.1.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -23,6 +23,36 @@ if(PROJECT_IS_TOP_LEVEL)
 else()
   set(EASEL_IS_TOP OFF)
 endif()
+
+# ---- 编译期身份：commit + 编译器（预编译包 vs 源码树的版本对应）-----------
+# 顺序：git 仓库里能跑 git 就用它；不在 git 里（比如打包/导出之后的源码树）
+# 就退回读同目录的 VERSION.json 的 commit 字段；两条路都没有就是 "unknown"。
+set(EASEL_GIT_SHA "")
+find_program(EASEL_GIT_EXECUTABLE git)
+if(EASEL_GIT_EXECUTABLE AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/.git")
+  execute_process(
+    COMMAND ${EASEL_GIT_EXECUTABLE} rev-parse --short=7 HEAD
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    OUTPUT_VARIABLE EASEL_GIT_SHA
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+    RESULT_VARIABLE _easel_git_rc)
+  if(NOT _easel_git_rc EQUAL 0)
+    set(EASEL_GIT_SHA "")
+  endif()
+endif()
+if(EASEL_GIT_SHA STREQUAL "" AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION.json")
+  file(READ "${CMAKE_CURRENT_SOURCE_DIR}/VERSION.json" _easel_version_json)
+  string(JSON EASEL_GIT_SHA ERROR_VARIABLE _easel_json_err GET "${_easel_version_json}" commit)
+  if(_easel_json_err)
+    set(EASEL_GIT_SHA "")
+  endif()
+endif()
+if(EASEL_GIT_SHA STREQUAL "")
+  set(EASEL_GIT_SHA "unknown")
+endif()
+set(EASEL_BUILT_WITH "${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
+message(STATUS "Easel: 提交 ${EASEL_GIT_SHA} · ${EASEL_BUILT_WITH}")
 
 option(EASEL_BUILD_EXAMPLES "编译 examples/"           ${EASEL_IS_TOP})
 option(EASEL_BUILD_TESTS    "编译 tests/"              ${EASEL_IS_TOP})
@@ -249,6 +279,8 @@ target_compile_definitions(easel PRIVATE
   EASEL_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
   EASEL_PROJECT_DIR="${EASEL_PROJECT_DIR}"
   EASEL_BACKEND_NAME="${EASEL_BACKEND_RESOLVED}"
+  EASEL_GIT_SHA="${EASEL_GIT_SHA}"
+  EASEL_BUILT_WITH="${EASEL_BUILT_WITH}"
   $<$<STREQUAL:${EASEL_BACKEND_RESOLVED},dx11>:EASEL_BACKEND_DX11>
   $<$<STREQUAL:${EASEL_BACKEND_RESOLVED},gl>:EASEL_BACKEND_GL>)
 
@@ -284,7 +316,7 @@ if(WIN32)
   target_link_libraries(easel PRIVATE dbghelp)
   target_compile_definitions(easel PUBLIC EASEL_HAVE_DBGHELP)
   # cli::parse() 靠 CommandLineToArgvW（shellapi.h）把命令行转成 UTF-8；STATIC 库的 PRIVATE
-  # 依赖会自动传给链接它的可执行文件（workbench/easel_tests），所以这里加一次就够。
+  # 依赖会自动传给链接它的可执行文件（easel_workbench/easel_tests），所以这里加一次就够。
   target_link_libraries(easel PRIVATE shell32)
 endif()
 if(MINGW)
@@ -380,31 +412,42 @@ if(EASEL_INSTALL)
   install(FILES ${CMAKE_CURRENT_BINARY_DIR}/easelConfig.cmake
                 ${CMAKE_CURRENT_BINARY_DIR}/easelConfigVersion.cmake
           DESTINATION ${EASEL_INSTALL_CMAKEDIR})
+
+  # ---- 预编译包的戳（版本对应）---------------------------------------------
+  # 学生工程（src/new_project.cpp 的 kCMake）用它跟源码树的 VERSION.json 核对
+  # commit 是否一致，编出来的和源码对不上是最难查的一类问题。
+  install(CODE "
+    string(TIMESTAMP _easel_prebuilt_date \"%Y-%m-%dT%H:%M:%SZ\" UTC)
+    file(WRITE \"\${CMAKE_INSTALL_PREFIX}/easel-prebuilt.json\" \"{\\\"version\\\":\\\"${PROJECT_VERSION}\\\",\\\"commit\\\":\\\"${EASEL_GIT_SHA}\\\",\\\"compiler\\\":\\\"${EASEL_BUILT_WITH}\\\",\\\"system\\\":\\\"${CMAKE_SYSTEM_NAME}\\\",\\\"date\\\":\\\"\${_easel_prebuilt_date}\\\"}\")
+  ")
 endif()
 
 # ============================================================================
 #  示例与测试
 # ============================================================================
 if(EASEL_BUILD_EXAMPLES)
+  add_subdirectory(examples/hello)
   add_subdirectory(examples/sort)
   add_subdirectory(examples/creative)
 endif()
 
 # ---- 工作台（D-29）：学生的入口。编译、运行、停止、生成 exe、导出源码 ----------
-# 只在单独构建 Easel 时编（学生工程 add_subdirectory 进来时不该多编一个工具）
+# 只在单独构建 Easel 时编（学生工程 add_subdirectory 进来时不该多编一个工具）。
+# CMake 目标名 easel_workbench（easel 已经是库目标了）；产出的可执行文件叫 Easel。
 option(EASEL_BUILD_WORKBENCH "编译工作台" ${EASEL_IS_TOP})
 if(EASEL_BUILD_WORKBENCH)
-  add_executable(workbench workbench/main.cpp)
-  target_link_libraries(workbench PRIVATE easel easel_imgui nfd)
-  target_include_directories(workbench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-  target_compile_definitions(workbench PRIVATE EASEL_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+  add_executable(easel_workbench workbench/main.cpp)
+  set_target_properties(easel_workbench PROPERTIES OUTPUT_NAME Easel)
+  target_link_libraries(easel_workbench PRIVATE easel easel_imgui nfd)
+  target_include_directories(easel_workbench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_compile_definitions(easel_workbench PRIVATE EASEL_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
   if(MSVC)
-    target_compile_options(workbench PRIVATE /utf-8)
+    target_compile_options(easel_workbench PRIVATE /utf-8)
   endif()
   if(WIN32)
-    set_target_properties(workbench PROPERTIES WIN32_EXECUTABLE TRUE)   # 没有黑框；printf 进 F12 日志窗，命令行下 Easel 会接回父终端
+    set_target_properties(easel_workbench PROPERTIES WIN32_EXECUTABLE TRUE)   # 没有黑框；printf 进 F12 日志窗，命令行下 Easel 会接回父终端
     if(MSVC)
-      target_link_options(workbench PRIVATE "/ENTRY:mainCRTStartup")
+      target_link_options(easel_workbench PRIVATE "/ENTRY:mainCRTStartup")
     endif()
   endif()
 endif()

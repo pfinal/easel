@@ -85,7 +85,7 @@ Easel 把 Scratch、Processing、openFrameworks 三种写法接到同一个库�
 ```cpp
 int main(int argc, char** argv) {
     easel::App app(argc, argv);
-    app.title("我的作品").size(1280, 800).theme(easel::Theme::Forest());
+    app.title("MySketch").size(1280, 800).theme(easel::Theme::Forest());
     app.onDraw([](easel::Canvas& c) { ... });
     app.onPanel([] { ... });
     return app.run();

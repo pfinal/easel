@@ -9,7 +9,7 @@
 
     python3 scripts/make_toolbox.py --prebuilt-dir <MinGW 装出来的 prefix>
 
-产出 windows-green/代码酷C++工具箱.zip。解压后，双击 启动.bat 就能用：
+产出 windows-green/代码酷C++工具箱.zip。解压后，双击 start.bat 就能用：
 不装任何东西、不要管理员权限、不写注册表、不用联网。
 
 三个组件都是**纯 zip**（不是 7z 自解压），所以这个脚本在 Mac / Linux / Windows 上
@@ -19,11 +19,15 @@
 """
 import argparse
 import io
+import json
 import os
+import re
 import shutil
+import subprocess
 import sys
 import urllib.request
 import zipfile
+from datetime import datetime, timezone
 
 # Windows 上标准输出默认 cp1252，打中文会炸；统一成 UTF-8（Python 3.7+）
 for _s in (sys.stdout, sys.stderr):
@@ -54,16 +58,16 @@ EASEL_ITEMS = ["CMakeLists.txt", "CMakePresets.json", "LICENSE", "README.md",
                "include", "src", "cmake", "scripts", "assets", "examples", "template",
                "template-hello", "workbench", "docs", "tests", "dist", "vendor"]
 
-WORKBENCH_BAT = """@echo off
+EASEL_BAT = """@echo off
 rem 代码酷工作台 —— 主入口（新建工程 / 编译 / 运行 / 生成 exe / 导出源码）
-rem 本文件必须用 GBK 存、不要加 chcp（理由见 启动.bat）。
-title daimaku workbench
+rem 本文件必须用 GBK 存、不要加 chcp（理由见 start.bat）。
+title daimaku Easel
 set "KIT=%~dp0"
 if not exist "%KIT%cmake\\bin\\cmake.exe" ( echo   没找到 %KIT%cmake\\bin\\cmake.exe —— 解压不完整？请重新解压整个 zip。 & goto :fail )
 if not exist "%KIT%ninja\\ninja.exe" ( echo   没找到 %KIT%ninja\\ninja.exe —— 解压不完整？ & goto :fail )
 if not exist "%KIT%w64devkit\\bin\\g++.exe" ( echo   没找到 %KIT%w64devkit\\bin\\g++.exe —— 解压不完整？ & goto :fail )
 set "PATH=%KIT%w64devkit\\bin;%KIT%cmake\\bin;%KIT%ninja;%PATH%"
-set "WB=%KIT%easel\\build\\mingw\\workbench.exe"
+set "WB=%KIT%easel\\build\\mingw\\Easel.exe"
 if not exist "%WB%" (
     echo.
     echo   第一次启动，要先把工作台编出来，几分钟。以后就直接开了。
@@ -71,7 +75,7 @@ if not exist "%WB%" (
     echo.
     "%KIT%cmake\\bin\\cmake.exe" -S "%KIT%easel" -B "%KIT%easel\\build\\mingw" -G Ninja -DCMAKE_BUILD_TYPE=Release -DEASEL_BUILD_EXAMPLES=OFF -DEASEL_BUILD_TESTS=OFF -DCMAKE_C_COMPILER="%KIT%w64devkit\\bin\\gcc.exe" -DCMAKE_CXX_COMPILER="%KIT%w64devkit\\bin\\g++.exe" -DCMAKE_MAKE_PROGRAM="%KIT%ninja\\ninja.exe"
     if errorlevel 1 goto :fail
-    "%KIT%cmake\\bin\\cmake.exe" --build "%KIT%easel\\build\\mingw" --target workbench --parallel
+    "%KIT%cmake\\bin\\cmake.exe" --build "%KIT%easel\\build\\mingw" --target easel_workbench --parallel
     if errorlevel 1 goto :fail
 )
 start "" "%WB%"
@@ -85,32 +89,25 @@ pause
 
 PREBUILT_BAT = """@echo off
 rem 把编好的东西收进一个目录，打包发给维护者（或者放回工具箱里）。
-rem 本文件必须用 GBK 存、不要加 chcp（理由见 启动.bat）。
+rem 本文件必须用 GBK 存、不要加 chcp（理由见 start.bat）。
 title daimaku prebuilt export
 setlocal
 set "KIT=%~dp0"
 set "OUT=%KIT%prebuilt-mingw"
 set "PATH=%KIT%w64devkit\\bin;%KIT%cmake\\bin;%KIT%ninja;%PATH%"
-if not exist "%KIT%easel\\build\\mingw\\workbench.exe" (
+if not exist "%KIT%easel\\build\\mingw\\Easel.exe" (
     echo.
-    echo   还没有编过工作台。先双击 工作台.bat，编完再来。
+    echo   还没有编过工作台。先双击 Easel.bat，编完再来。
     goto :fail
 )
 if exist "%OUT%" rmdir /s /q "%OUT%"
 mkdir "%OUT%"
 echo.
-echo   [1/3] 工作台 workbench.exe
-copy /y "%KIT%easel\\build\\mingw\\workbench.exe" "%OUT%\\" >nul
-echo   [2/3] 预编译的 Easel 包（cmake --install，十几 MB）
+echo   [1/2] 工作台 Easel.exe
+copy /y "%KIT%easel\\build\\mingw\\Easel.exe" "%OUT%\\" >nul
+echo   [2/2] 预编译的 Easel 包（cmake --install，十几 MB；连版本戳 easel-prebuilt.json 一起装）
 "%KIT%cmake\\bin\\cmake.exe" --install "%KIT%easel\\build\\mingw" --prefix "%OUT%\\prebuilt"
 if errorlevel 1 goto :fail
-echo   [3/3] 版本信息
-> "%OUT%\\版本.txt" (
-    echo 工具链: w64devkit gcc 14.1 + Ninja
-    echo 日期: %DATE% %TIME%
-    findstr /c:"define EASEL_VERSION" "%KIT%easel\\include\\easel\\core.h"
-    "%KIT%w64devkit\\bin\\g++.exe" --version
-)
 echo.
 echo   好了：%OUT%
 echo   把这个目录整个压成 zip 发给维护者就行。
@@ -142,7 +139,7 @@ ninja --version
 echo.
 echo   模板工程在 %KIT%easel\\template
 echo.
-echo   ** 一般不用这个黑框：双击目录里的 工作台.bat 就行 **
+echo   ** 一般不用这个黑框：双击目录里的 Easel.bat 就行 **
 echo      （新建工程、编译、运行、生成 exe、导出源码，都在里面）
 echo.
 echo   第一次用，先把模板拷成自己的工程：
@@ -243,6 +240,60 @@ def dir_size(path):
                for dp, _, fs in os.walk(path) for f in fs)
 
 
+def git_commit(repo):
+    """repo 里跑 `git rev-parse --short=7 HEAD`。不是 git 仓库 / 没装 git 就返回 None。"""
+    try:
+        out = subprocess.run(["git", "rev-parse", "--short=7", "HEAD"], cwd=repo,
+                              capture_output=True, text=True, check=True)
+        return out.stdout.strip() or None
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+
+def easel_version():
+    """从根 CMakeLists.txt 的 project(easel VERSION x.y.z ...) 里取版本号。"""
+    cmake = os.path.join(ROOT, "CMakeLists.txt")
+    text = open(cmake, encoding="utf-8").read()
+    m = re.search(r"project\(\s*easel\s+VERSION\s+([0-9.]+)", text)
+    return m.group(1) if m else "0.0.0"
+
+
+def write_version_json(dest, commit):
+    """<工具箱>/easel/VERSION.json —— 源码树的版本戳，字段和 easel-prebuilt.json 对齐。
+
+    make_toolbox.py 打包出来的是源码，不是编出来的东西，所以 compiler / system 留空；
+    src/new_project.cpp 的 kCMake 拿它的 commit 跟 easel/prebuilt/easel-prebuilt.json
+    的 commit 核对，不一致就改用源码编，不会悄悄链上一份对不上号的预编译包。
+    """
+    payload = {
+        "version": easel_version(),
+        "commit": commit or "unknown",
+        "compiler": "",
+        "system": "",
+        "date": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    with open(dest, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+
+
+def check_prebuilt_commit(prebuilt_dir, source_commit):
+    """--prebuilt-dir 必须带着 cmake --install 写的 easel-prebuilt.json，
+    且它的 commit 得和正在打包的源码 commit 一样 —— 不然工具箱里预编译的
+    Easel 和源码树不是同一份东西，最难查的一类问题。"""
+    stamp = os.path.join(prebuilt_dir, "easel-prebuilt.json")
+    if not os.path.exists(stamp):
+        raise RuntimeError(f"{prebuilt_dir} 里没有 easel-prebuilt.json（不像是 `cmake --install` 装出来的，"
+                            f"重新 cmake --install 一遍再来）")
+    with open(stamp, encoding="utf-8") as f:
+        prebuilt_commit = json.load(f).get("commit")
+    if not source_commit:
+        raise RuntimeError("打包用的这份 Easel 源码不是 git 仓库（或者没装 git），测不出 commit，"
+                            "没法核对预编译包是不是同一份源码编的")
+    if prebuilt_commit != source_commit:
+        raise RuntimeError(f"预编译包是 {prebuilt_commit} 编的，源码是 {source_commit}，重编一份再来")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=os.path.join(ROOT, "windows-green", "工具箱"))
@@ -276,8 +327,17 @@ def main():
     if missing:
         print(f"  （跳过不存在的：{', '.join(missing)}）")
 
+    source_commit = git_commit(ROOT)
+    write_version_json(os.path.join(out, "easel", "VERSION.json"), source_commit)
+    print(f"  源码戳 → easel/VERSION.json（commit {source_commit or 'unknown'}）")
+
     # 预编译包（D-26）：有它工程 find_package(easel CONFIG) 几秒钟就链上
     if args.prebuilt_dir:
+        try:
+            check_prebuilt_commit(args.prebuilt_dir, source_commit)
+        except RuntimeError as e:
+            print(f"[工具箱] {e}", file=sys.stderr)
+            return 2
         dest = os.path.join(out, "easel", "prebuilt")
         try:
             size = copy_prebuilt(args.prebuilt_dir, dest)
@@ -290,21 +350,18 @@ def main():
               "第一次编译要等三分钟。Windows 的那份由 CI 产。")
 
     print("=== 3/3 启动脚本 ===")
-    # .bat 必须是 GBK + CRLF、不带 chcp（见 START_BAT 里的注释）
-    for name in ("启动.bat", "start.bat"):   # 中文名万一被解压器搞乱，留个 ASCII 的
-        with open(os.path.join(out, name), "w", encoding="gbk", newline="\r\n") as f:
-            f.write(START_BAT)
+    # .bat 只留英文名（D-36）；必须是 GBK + CRLF、不带 chcp（见 START_BAT 里的注释）
+    with open(os.path.join(out, "start.bat"), "w", encoding="gbk", newline="\r\n") as f:
+        f.write(START_BAT)
     # 工作台才是主入口（D-29）；命令行那个黑框留给要手动折腾的人
-    for name in ("工作台.bat", "workbench.bat"):
-        with open(os.path.join(out, name), "w", encoding="gbk", newline="\r\n") as f:
-            f.write(WORKBENCH_BAT)
+    with open(os.path.join(out, "Easel.bat"), "w", encoding="gbk", newline="\r\n") as f:
+        f.write(EASEL_BAT)
     # 预编译导出脚本（把编好的东西打包发给维护者）
-    for name in ("导出预编译.bat", "export-prebuilt.bat"):
-        with open(os.path.join(out, name), "w", encoding="gbk", newline="\r\n") as f:
-            f.write(PREBUILT_BAT)
+    with open(os.path.join(out, "export-prebuilt.bat"), "w", encoding="gbk", newline="\r\n") as f:
+        f.write(PREBUILT_BAT)
     readme = os.path.join(ROOT, "windows-green", "README.md")
     if os.path.exists(readme):
-        shutil.copy2(readme, os.path.join(out, "使用说明.md"))
+        shutil.copy2(readme, os.path.join(out, "README.md"))
 
     print(f"    展开后 {dir_size(out)/1e6:.0f} MB")
 
@@ -322,7 +379,7 @@ def main():
                 full = os.path.join(dp, f)
                 z.write(full, os.path.relpath(full, out))
     print(f"好了：{zip_path}（{os.path.getsize(zip_path)/1e6:.0f} MB）")
-    print("解压后，双击 启动.bat。路径别太深，Windows 有 260 字符限制。")
+    print("解压后，双击 start.bat。路径别太深，Windows 有 260 字符限制。")
     return 0
 
 

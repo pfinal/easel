@@ -1,0 +1,11 @@
+add_executable(easel_example_hello main.cpp)
+target_link_libraries(easel_example_hello PRIVATE easel::easel)
+if(MSVC)
+  target_compile_options(easel_example_hello PRIVATE /utf-8)
+endif()
+if(WIN32)
+  set_target_properties(easel_example_hello PROPERTIES WIN32_EXECUTABLE TRUE)   # 没有黑框；printf 进 F12 日志窗，命令行下 Easel 会接回父终端
+  if(MSVC)
+    target_link_options(easel_example_hello PRIVATE "/ENTRY:mainCRTStartup")
+  endif()
+endif()

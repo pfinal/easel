@@ -62,7 +62,7 @@ seed(12345)       current_seed()          // 命令行 --seed 12345 也能改；
 ```cpp
 int main(int argc, char** argv) {
     easel::App app(argc, argv);
-    app.title("我的作品").size(1280, 800).theme(easel::Theme::Forest());
+    app.title("MySketch").size(1280, 800).theme(easel::Theme::Forest());
 
     app.onDraw ([&](easel::Canvas& c){ /* 每帧重画整张画布 */ });
     app.onPanel([&]{ /* 每帧重画右侧面板 */ });
@@ -85,16 +85,16 @@ int main(int argc, char** argv) {
 
 ## 工作台 —— 从这里开始（D-29）
 
-双击它（Windows：工具箱里的 `工作台.bat`；Mac：`workbench`）。
+双击它（Windows：工具箱里的 `Easel.bat`；Mac：`Easel`）。
 
 | 按钮 | 干什么 |
 |---|---|
-| 新建工程… | 默认是**空工程**：`README.md` + `src/app.cpp` + `src/solver.cpp`，画一个 Hello。勾「带回放的完整骨架」才给数据文件、回放、收敛曲线 |
+| 新建工程… | 骨架下拉默认是**空白**：只有 `src/app.cpp`，画一个 Hello。选「算法骨架」才给 `src/solver.cpp` + 数据文件 + 回放 + 收敛曲线；也可以直接从一个自带示例建。作品名只能是英文 |
 | 编译并运行（F5） | 编译 + 把作品跑起来（**作品是子进程，自己一个窗口**）。报错行点一下就跳到出错的代码 |
-| 新建工程后 | 目录里只有 `README.md` + `src/app.cpp`（界面）+ `src/solver.cpp`（算法）；脚手架都在 `.easel/` 里 |
+| 新建工程后（空白） | 目录里只有 `src/app.cpp`；脚手架都在 `.easel/` 里（不生成 README） |
 | 想加测试 | 新建 `tests/test_solver.cpp`，第一行 `#include "../src/solver.cpp"`，下次编译自动带上 |
 | 停止 | 掐掉正在跑的作品 |
-| 生成 exe | Release 版 + assets/data + 运行说明，放进 `dist/`，可以直接双击 |
+| 生成 exe | Release 版 + assets/data + README.txt，放进 `dist/<名字>-release/`，可以直接双击 |
 | 导出源码 | 自足的完整工程，不装 Easel、不联网也能编 |
 
 第一次编要几分钟（要把 ImGui/GLFW/ImPlot 编出来），之后改一行大约 6 秒。
@@ -126,7 +126,7 @@ cmake -S . -B build && cmake --build build                    # 连界面一起�
 
 因为包里带着 `src/easel_core.h`（单头零依赖）、`easel/`（库源码）和 `easel/vendor/`
 （全部第三方依赖的源码），顶层 `CMakeLists.txt` 会自己发现自带的 `easel/`。
-导出完会写一份 `导出自检.txt`，逐条核对上面这些，并**真的编一次** `solver.cpp` 来验证。
+导出完会写一份 `CHECK.txt`，逐条核对上面这些，并**真的编一次** `solver.cpp` 来验证。
 
 ## Canvas（位置是世界坐标，线宽和字号是像素）
 

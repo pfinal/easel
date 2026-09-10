@@ -65,9 +65,32 @@ jobs:
         run: ctest --preset default
 
       - name: 模板工程也要能构建（三个 target）
+        if: runner.os != 'Windows'
         run: |
           cmake -S template -B template/build/default -DCMAKE_BUILD_TYPE=RelWithDebInfo -DEASEL_DIR=${{ github.workspace }}
           cmake --build template/build/default --parallel
+        shell: bash
+
+      # Windows 这条腿走的是 MSVC（多配置生成器），拆成一条命令一个 step，
+      # 报错时能靠 step 名直接定位是哪个 target 编不过（--config 在多配置生成器下必须带）。
+      - name: 模板：配置
+        if: runner.os == 'Windows'
+        run: cmake -S template -B template/build/default -DCMAKE_BUILD_TYPE=RelWithDebInfo -DEASEL_DIR=${{ github.workspace }}
+        shell: bash
+
+      - name: 模板：编 solver
+        if: runner.os == 'Windows'
+        run: cmake --build template/build/default --target solver --config RelWithDebInfo --parallel
+        shell: bash
+
+      - name: 模板：编 tests
+        if: runner.os == 'Windows'
+        run: cmake --build template/build/default --target tests --config RelWithDebInfo --parallel
+        shell: bash
+
+      - name: 模板：编 app
+        if: runner.os == 'Windows'
+        run: cmake --build template/build/default --target app --config RelWithDebInfo --parallel
         shell: bash
 
       - name: 模板工程的测试
@@ -98,40 +121,41 @@ jobs:
           cmake --build template/build/ci --parallel
 
       - name: 导出（不开窗口，--export 在建窗口之前就返回了）
-        run: template/build/ci/bin/app --export /tmp/out/作品 --name 作品
+        run: template/build/ci/bin/app --export /tmp/out/Work --name Work
 
       - name: 自检里不许有 [×]
         run: |
-          cat /tmp/out/作品/导出自检.txt
-          if grep -q '\[×\]' /tmp/out/作品/导出自检.txt; then exit 1; fi
+          cat /tmp/out/Work/CHECK.txt
+          if grep -q '\[×\]' /tmp/out/Work/CHECK.txt; then exit 1; fi
 
       - name: 导出的工程：一条 g++ 编算法（脱开 Easel 的那一半）
         run: |
-          cd /tmp/out/作品
+          cd /tmp/out/Work
           g++ -std=c++17 -Wall -Wextra -DEASEL_STANDALONE src/solver.cpp -o solver
           ./solver data/example.json
 
       - name: 工作台新建的工程：根目录只有学生自己的东西（D-30）
         run: |
           cmake --preset default
-          cmake --build --preset default --target workbench --parallel
-          # 默认是空工程：三个文件（D-32）
-          ./build/default/workbench --new /tmp/blank --name 空工程
-          test "$(cd /tmp/blank/空工程 && ls | wc -l)" -eq 2   # README.md + src/
-          # 完整骨架：这一份往下继续编
-          ./build/default/workbench --new /tmp/np --name 测试作品 --full
-          cd /tmp/np/测试作品
+          cmake --build --preset default --target easel_workbench --parallel
+          # 默认是空工程：一个文件（D-32 / D-36，作品名已限定 ASCII）
+          ./build/default/Easel --new /tmp/blank --name Blank
+          test "$(cd /tmp/blank/Blank && ls | wc -l)" -eq 1   # 只有 src/
+          # 算法骨架：这一份往下继续编
+          ./build/default/Easel --new /tmp/np --name Demo --full
+          cd /tmp/np/Demo
           ls -a
           # 脚手架一律不许出现在根目录
           for junk in CMakeLists.txt CMakePresets.json 跑.sh 跑.bat run.bat docs build tests \
-                      src/easel_core.h; do
+                      src/easel_core.h README.md; do
             if [ -e "$junk" ]; then echo "根目录里不该有 $junk"; exit 1; fi
           done
-          test -f src/app.cpp && test -f src/solver.cpp && test -f README.md
-          test -f .easel/easel_core.h && test -f .easel/CMakeLists.txt
+          test -f src/app.cpp && test -f src/solver.cpp
+          test ! -f .easel/easel_core.h && test -f .easel/CMakeLists.txt
           grep -q '"files.exclude"' .vscode/settings.json
-          # 单头库搬走了，裸 g++ 还得能编（D-23 那条铁律不许因为折叠布局失效）
-          g++ -std=c++17 -Wall -Wextra -DEASEL_STANDALONE -I.easel src/solver.cpp -o solver
+          # 单头库不拷贝，直接指到 Easel 目录的 dist/（D-36）；裸 g++ 还得能编
+          # （D-23 那条铁律不许因为折叠布局失效）
+          g++ -std=c++17 -Wall -Wextra -DEASEL_STANDALONE -I$GITHUB_WORKSPACE/dist src/solver.cpp -o solver
           ./solver data/example.json
           # 生成的那份构建脚本也要能编出界面
           cmake -S .easel -B .easel/build -DCMAKE_BUILD_TYPE=Release -DEASEL_DIR=$GITHUB_WORKSPACE
@@ -140,19 +164,19 @@ jobs:
 
       - name: 新建的工程导出之后：展开成标准工程，评委那边不给参数也能编（D-30）
         run: |
-          cd /tmp/np/测试作品
-          ./.easel/build/bin/app --export /tmp/np/导出/测试作品 --name 测试作品
-          cd /tmp/np/导出/测试作品
+          cd /tmp/np/Demo
+          ./.easel/build/bin/app --export /tmp/np/out/Demo --name Demo
+          cd /tmp/np/out/Demo
           test -f CMakeLists.txt && test -f src/easel_core.h
           test ! -d .easel
-          if grep -q '\[×\]' 导出自检.txt; then cat 导出自检.txt; exit 1; fi
+          if grep -q '\[×\]' CHECK.txt; then cat CHECK.txt; exit 1; fi
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release 2>&1 | tee cfg.log
           grep -q "本次构建完全离线" cfg.log
           cmake --build build --parallel
 
       - name: 导出的工程：完全离线编出界面（不给 EASEL_DIR）
         run: |
-          cd /tmp/out/作品
+          cd /tmp/out/Work
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release 2>&1 | tee cfg.log
           grep -q "本次构建完全离线" cfg.log
           grep -q "用包里自带的 Easel" cfg.log
@@ -215,7 +239,7 @@ jobs:
         shell: pwsh
         run: cmake --preset mingw
 
-      - name: 构建（easel、workbench、examples、tests 全部目标）
+      - name: 构建（easel、easel_workbench、examples、tests 全部目标）
         shell: pwsh
         run: cmake --build build/mingw --parallel
 
@@ -223,12 +247,24 @@ jobs:
         shell: pwsh
         run: ctest --test-dir build/mingw --output-on-failure
 
-      - name: 无头验证：工作台建工程 + creative 示例 --doctor（两条命令都不开窗口）
+      - name: 无头验证 1/3：mkdir
         shell: cmd
         run: |
           mkdir "%TEMP%\np"
-          build\mingw\workbench.exe --new "%TEMP%\np" --name 测试作品 --full
+          echo EXIT=%ERRORLEVEL%
+
+      # 作品名已限定 ASCII（D-36）：这步原来是用来顺便验中文参数的，现在换成 ASCII 名字
+      - name: 无头验证 2/3：Easel.exe --new
+        shell: cmd
+        run: |
+          build\mingw\Easel.exe --new "%TEMP%\np" --name Demo --full
+          echo EXIT=%ERRORLEVEL%
+
+      - name: 无头验证 3/3：creative --doctor
+        shell: cmd
+        run: |
           build\mingw\examples\creative\easel_example_creative.exe --doctor
+          echo EXIT=%ERRORLEVEL%
 
       - name: DX11 · MinGW，允许失败
         continue-on-error: true
@@ -242,7 +278,7 @@ jobs:
         with:
           name: windows-mingw-bin
           path: |
-            build/mingw/workbench.exe
+            build/mingw/Easel.exe
             build/mingw/easel_tests.exe
             build/mingw/examples/sort/easel_example_sort.exe
             build/mingw/examples/creative/easel_example_creative.exe

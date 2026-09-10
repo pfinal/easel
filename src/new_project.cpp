@@ -1,16 +1,14 @@
-// Easel — new_project.cpp  工作台的「新建工程」（D-29 / D-30）
+// Easel — new_project.cpp  工作台的「新建工程」（D-29 / D-30 / D-36）
 //
-// 目标：新建出来的工程里，**只有你自己的东西**。
+// 目标：新建出来的工程里，**只有你自己的东西**。空工程只有一个文件：
 //
-//     我的作品/
-//     ├── README.md          三句话：改哪两个文件、按钮在哪
-//     ├── src/app.cpp        界面
-//     ├── src/solver.cpp     算法
-//     ├── data/example.json  数据
-//     └── assets/map.png     底图
+//     MySketch/
+//     └── src/app.cpp        界面（画一个 Hello）
 //
-// 构建脚本、单头库、构建产物全在 .easel/ 里，你不用知道它存在。
-// 「导出源码」时再展开成结构清晰的标准工程（CMakeLists 在根目录、easel_core.h 在 src/）。
+// 骨架下拉选「算法骨架」才会多出 src/solver.cpp、data/example.json、assets/map.png。
+// 构建脚本、构建产物全在 .easel/ 里，你不用知道它存在；单头库不拷贝，直接指到
+// Easel 目录的 dist/easel_core.h。「导出源码」时再展开成结构清晰的标准工程
+//（CMakeLists 在根目录、easel_core.h 在 src/）。
 #include "internal.h"
 
 #include <cstdio>
@@ -53,11 +51,60 @@ include(FetchContent)
 if(NOT DEFINED EASEL_DIR AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/easel/CMakeLists.txt")
   set(EASEL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/easel")
 endif()
+# 预编译包和源码树是不是同一个 commit：编出来的和源码对不上号是最难查的一类问题
+# （easel-prebuilt.json 由 cmake --install 写，VERSION.json 由 make_toolbox.py 打包源码时写）。
+# 两个 commit 都读到且不一样才改道；读不到就是没法核对，照旧信预编译包。
+set(EASEL_PREBUILT_OK TRUE)
+if(DEFINED EASEL_DIR)
+  set(_easel_prebuilt_commit "")
+  if(EXISTS "${EASEL_DIR}/prebuilt/easel-prebuilt.json")
+    file(READ "${EASEL_DIR}/prebuilt/easel-prebuilt.json" _easel_pb_json)
+    string(JSON _easel_prebuilt_commit ERROR_VARIABLE _easel_pb_err GET "${_easel_pb_json}" commit)
+    if(_easel_pb_err)
+      set(_easel_prebuilt_commit "")
+    endif()
+  endif()
+
+  set(_easel_src_commit "")
+  if(EXISTS "${EASEL_DIR}/VERSION.json")
+    file(READ "${EASEL_DIR}/VERSION.json" _easel_sv_json)
+    string(JSON _easel_src_commit ERROR_VARIABLE _easel_sv_err GET "${_easel_sv_json}" commit)
+    if(_easel_sv_err)
+      set(_easel_src_commit "")
+    endif()
+  else()
+    # 开发机上 EASEL_DIR 直接指向 Easel 的 git 仓库，没有 VERSION.json 这个文件
+    find_program(_easel_git_np git)
+    if(_easel_git_np AND EXISTS "${EASEL_DIR}/.git")
+      execute_process(
+        COMMAND ${_easel_git_np} rev-parse --short=7 HEAD
+        WORKING_DIRECTORY "${EASEL_DIR}"
+        OUTPUT_VARIABLE _easel_src_commit
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+        RESULT_VARIABLE _easel_git_np_rc)
+      if(NOT _easel_git_np_rc EQUAL 0)
+        set(_easel_src_commit "")
+      endif()
+    endif()
+  endif()
+
+  if(_easel_prebuilt_commit AND _easel_src_commit)
+    if(NOT _easel_prebuilt_commit STREQUAL _easel_src_commit)
+      message(STATUS "预编译的 Easel 是提交 ${_easel_prebuilt_commit}，源码是提交 ${_easel_src_commit}，"
+                      "不一致：改用源码编（几分钟）")
+      set(EASEL_PREBUILT_OK FALSE)
+    endif()
+  else()
+    message(STATUS "没法核对版本，照用预编译")
+  endif()
+endif()
+
 # 三条路，从快到慢：
 #   1. 工具箱里的预编译包 <工具箱>/easel/prebuilt/ —— 几秒钟链上，默认走的就是这条
 #   2. Easel 源码树 —— 头一回要连 ImGui/GLFW 一起编，三分钟起步（改 Easel 本身时用）
 #   3. 两样都没有，上网拉一份
-if(DEFINED EASEL_DIR AND EXISTS "${EASEL_DIR}/prebuilt/lib/cmake/easel/easelConfig.cmake")
+if(DEFINED EASEL_DIR AND EASEL_PREBUILT_OK AND EXISTS "${EASEL_DIR}/prebuilt/lib/cmake/easel/easelConfig.cmake")
   set(easel_DIR "${EASEL_DIR}/prebuilt/lib/cmake/easel")
   find_package(easel CONFIG REQUIRED)
   message(STATUS "用预编译的 Easel: ${easel_DIR}")
@@ -72,10 +119,20 @@ else()
   FetchContent_MakeAvailable(easel)
 endif()
 
+# solver / tests 直接 #include "easel_core.h"（单头库），不经过 easel::easel 这个 target，
+# 所以要单独给一条 include 路径。不拷一份进工程，直接指到 dist/ 下摊平好的那份：
+# EASEL_DIR 有定义（预编译包或本地源码两条路）就在 ${EASEL_DIR}/dist；
+# FetchContent 远程拉的话在 ${easel_SOURCE_DIR}/dist —— 两边都是 git 仓库里现成的文件。
+if(DEFINED EASEL_DIR)
+  set(EASEL_CORE_DIR "${EASEL_DIR}/dist")
+else()
+  set(EASEL_CORE_DIR "${easel_SOURCE_DIR}/dist")
+endif()
+
 # ---- 界面（你的作品）-----------------------------------------------------
 add_executable(app "${PROJ}/src/app.cpp")
 target_link_libraries(app PRIVATE easel::easel)
-target_include_directories(app PRIVATE "${PROJ}/src" "${CMAKE_CURRENT_SOURCE_DIR}")
+target_include_directories(app PRIVATE "${PROJ}/src" "${CMAKE_CURRENT_SOURCE_DIR}" "${EASEL_CORE_DIR}")
 if(WIN32)
   set_target_properties(app PROPERTIES WIN32_EXECUTABLE TRUE)   # 没有黑框；printf 进 F12 日志窗，命令行下 Easel 会接回父终端
   if(MSVC)
@@ -89,14 +146,16 @@ foreach(dir data assets)
   endif()
 endforeach()
 
-# ---- 算法的命令行版（D-23：同一份 solver.cpp，三个入口）--------------------
-add_executable(solver "${PROJ}/src/solver.cpp")
-target_compile_definitions(solver PRIVATE EASEL_STANDALONE)
-target_include_directories(solver PRIVATE "${PROJ}/src" "${CMAKE_CURRENT_SOURCE_DIR}")
-if(WIN32)
-  # cli::parse() 用 CommandLineToArgvW（shellapi.h）把命令行转成 UTF-8；solver 裸编 easel_core.h，
-  # 不经过 easel::easel，这里要单独链一次 shell32。
-  target_link_libraries(solver PRIVATE shell32)
+# ---- 算法的命令行版（D-23：同一份 solver.cpp，三个入口；有 src/solver.cpp 才建，D-36）----
+if(EXISTS "${PROJ}/src/solver.cpp")
+  add_executable(solver "${PROJ}/src/solver.cpp")
+  target_compile_definitions(solver PRIVATE EASEL_STANDALONE)
+  target_include_directories(solver PRIVATE "${PROJ}/src" "${EASEL_CORE_DIR}")
+  if(WIN32)
+    # cli::parse() 用 CommandLineToArgvW（shellapi.h）把命令行转成 UTF-8；solver 裸编 easel_core.h，
+    # 不经过 easel::easel，这里要单独链一次 shell32。
+    target_link_libraries(solver PRIVATE shell32)
+  endif()
 endif()
 
 # ---- 测试（有 tests/ 才建）-------------------------------------------------
@@ -106,66 +165,52 @@ if(EXISTS "${PROJ}/tests/test_solver.cpp")
   enable_testing()
   add_executable(tests "${PROJ}/tests/test_solver.cpp")
   target_link_libraries(tests PRIVATE doctest::doctest)
-  target_include_directories(tests PRIVATE "${PROJ}/src" "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_include_directories(tests PRIVATE "${PROJ}/src" "${EASEL_CORE_DIR}")
   add_test(NAME solver_tests COMMAND tests)
 endif()
 )CMAKE";
 
-const char* const kReadme = R"MD(# {NAME}
-
-用 [Easel](https://github.com/pfinal/easel) 做的算法可视化作品。
-
-## 你要改的就两个文件
-
-| 文件 | 写什么 |
-|---|---|
-| `src/solver.cpp` | **逻辑**：数据、状态、每帧要算的东西（做算法类作品时它还能单独在终端里跑） |
-| `src/app.cpp` | **界面**：画什么（`onDraw`）、右边面板上有哪些控件（`onPanel`） |
-
-{DATA}
-
-## 怎么跑
-
-回到**工作台**，点「编译并运行」。作品会在另一个窗口里打开。
-编译错了，输出区里红色那行点一下，就跳到出错的地方。
-
-写完了：工作台 →「生成 exe」出可以双击的程序，「导出源码」出可独立编译的完整工程。
-
-## 想加测试
-
-新建一个 `tests/test_solver.cpp`，第一行 `#include "../src/solver.cpp"`，
-然后用 [doctest](https://github.com/doctest/doctest) 写用例。工作台下次编译时会自动带上它。
-
-## 出问题了
-
-- 程序里按 **F12** 打开调试台：日志 / 追踪 / 状态 / 画布 / 用例 / 自检六页
-- 状态栏左边那个点：绿 = 正常，黄 = 有警告，红 = 断言失败或崩过
-- 界面打不开或者画面不对：工作台的输出区里有全部信息，把这段完整复制下来求助
-- 完整的 API 参考：Easel 仓库的 `docs/reference.md`
-)MD";
-
+// includePath 里两条 {EASELDIR} 路径是生成时填进去的绝对路径（VS Code 不会跑 cmake
+// 去解析 EASEL_DIR，只能给它一份写死的）：dist/ 是单头库摊平的那份（给 solver.cpp 用），
+// include/ 是分头文件的那份（给 app.cpp 的 <easel/easel.h> 用）。
 const char* const kSettings = R"JSON({
   "files.encoding": "utf8",
   "C_Cpp.default.cppStandard": "c++17",
-  "C_Cpp.default.includePath": ["${workspaceFolder}/src", "${workspaceFolder}/.easel"],
+  "C_Cpp.default.includePath": ["${workspaceFolder}/src", "{EASELDIR}/dist", "{EASELDIR}/include"],
   "C_Cpp.default.defines": ["EASEL_STANDALONE"],
   "cmake.configureOnOpen": false,
   "search.exclude": { "**/.easel": true },
-  "// 下面这段把构建脚本和库折起来": "想看它们，把 files.exclude 整段删掉",
+  "// 下面这段把构建脚本折起来": "想看它，把 files.exclude 整段删掉",
   "files.exclude": { ".easel": true }
 }
 )JSON";
 
-std::string fill(const char* tpl, const std::string& name) {
-    std::string s = tpl, key = "{NAME}";
-    for (size_t at = s.find(key); at != std::string::npos; at = s.find(key))
-        s.replace(at, key.size(), name);
+std::string fill(const char* tpl, const std::string& name, const std::string& easelDir = {}) {
+    std::string s = tpl;
+    auto rep = [&](const std::string& key, const std::string& val) {
+        for (size_t at = s.find(key); at != std::string::npos; at = s.find(key))
+            s.replace(at, key.size(), val);
+    };
+    rep("{NAME}", name);
+    if (!easelDir.empty()) rep("{EASELDIR}", easelDir);
     return s;
 }
 
 bool asciiOnly(const std::string& s) {
     for (unsigned char c : s)
         if (c > 127) return false;
+    return true;
+}
+
+// 作品名：只许英文字母、数字、下划线、连字符，首字符不能是连字符
+// （编译器/CMake 对中文路径支持不好；D-36）。
+bool validName(const std::string& s) {
+    if (s.empty() || s[0] == '-') return false;
+    for (char c : s) {
+        bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+                  c == '_' || c == '-';
+        if (!ok) return false;
+    }
     return true;
 }
 
@@ -188,12 +233,17 @@ NewProjectReport createProject(const NewProjectOptions& opt) {
         r.error = "作品名不能是空的";
         return r;
     }
-    if (name.find_first_of("/\\:*?\"<>|") != std::string::npos) {
-        r.error = "作品名里不能有 / \\ : * ? \" < > | 这些字符";
+    if (!validName(name)) {
+        r.error = "作品名只能用英文字母、数字、下划线、连字符（编译器对中文路径支持不好）。"
+                   "窗口标题可以在 app.cpp 里改成中文。";
         return r;
     }
     if (opt.parentDir.empty()) {
         r.error = "选一个存在的目录来放这个工程";
+        return r;
+    }
+    if (!asciiOnly(opt.parentDir)) {
+        r.error = "放工程的目录不能含中文（编译器对中文路径支持不好），换到比如 D:\\projects";
         return r;
     }
     if (!isDirU8(opt.parentDir) && !makeDirsU8(opt.parentDir)) {
@@ -201,12 +251,19 @@ NewProjectReport createProject(const NewProjectOptions& opt) {
         return r;
     }
 
-    // 空工程用 template-hello/（两个文件），完整骨架用 template/
+    bool fromExample = !opt.exampleDir.empty();   // exampleDir 非空时和 fullSkeleton 互斥
+
+    // 空工程用 template-hello/（一个文件），算法骨架用 template/；exampleDir 走单独的分支
     std::string tpl = opt.templateDir;
-    if (tpl.empty())
-        tpl = joinPath(opt.easelDir, opt.fullSkeleton ? "template" : "template-hello");
-    if (!existsU8(joinPath(tpl, "src/solver.cpp"))) {
-        r.error = "找不到工程模板：" + tpl;
+    if (!fromExample) {
+        if (tpl.empty())
+            tpl = joinPath(opt.easelDir, opt.fullSkeleton ? "template" : "template-hello");
+        if (!existsU8(joinPath(tpl, "src/app.cpp"))) {
+            r.error = "找不到工程模板：" + tpl;
+            return r;
+        }
+    } else if (!existsU8(joinPath(opt.exampleDir, "main.cpp"))) {
+        r.error = "示例目录里没有 main.cpp：" + opt.exampleDir;
         return r;
     }
 
@@ -221,52 +278,60 @@ NewProjectReport createProject(const NewProjectOptions& opt) {
         return r;
     }
 
-    // ---- 你的东西：两个源文件 + 数据 + 底图 ----
-    if (!take(tpl, dir, "src/app.cpp", &r.files) || !take(tpl, dir, "src/solver.cpp", &r.files)) {
-        r.error = "模板里缺 src/app.cpp 或 src/solver.cpp：" + tpl;
-        return r;
+    // ---- 你的东西：源文件 + 数据 + 底图 ----
+    if (fromExample) {
+        // 示例：main.cpp 是单文件（界面+算法都在一起），拷成 src/app.cpp
+        makeDirsU8(joinPath(dir, "src"));
+        if (!copyFileU8(joinPath(opt.exampleDir, "main.cpp"), joinPath(dir, "src/app.cpp"))) {
+            r.error = "拷不过去：" + joinPath(opt.exampleDir, "main.cpp");
+            return r;
+        }
+        ++r.files;
+        take(opt.exampleDir, dir, "assets", &r.files);
+        take(opt.exampleDir, dir, "data", &r.files);
+    } else {
+        if (!take(tpl, dir, "src/app.cpp", &r.files)) {
+            r.error = "模板里缺 src/app.cpp：" + tpl;
+            return r;
+        }
+        take(tpl, dir, "src/solver.cpp", &r.files);   // 空工程没有这个文件，take() 会自己跳过
+        if (opt.fullSkeleton) {
+            take(tpl, dir, "data", &r.files);
+            take(tpl, dir, "assets", &r.files);
+        }
+        if (opt.withTests) take(tpl, dir, "tests", &r.files);
     }
-    take(tpl, dir, "data", &r.files);      // 空工程没有这两样，take() 会自己跳过
-    take(tpl, dir, "assets", &r.files);
-    if (opt.withTests) take(tpl, dir, "tests", &r.files);
 
-    // ---- 脚手架：全进 .easel/，你看不见 ----
+    // ---- 脚手架：全进 .easel/，你看不见（单头库不拷贝，直接指到 <easelDir>/dist）----
     std::string hidden = joinPath(dir, ".easel");
-    // 单头库统一从完整模板那儿取（amalgamate.py 只同步那一份）
-    std::string core = joinPath(tpl, "src/easel_core.h");
-    if (!existsU8(core)) core = joinPath(joinPath(opt.easelDir, "template"), "src/easel_core.h");
-    if (!copyFileU8(core, joinPath(hidden, "easel_core.h"))) {
-        r.error = "找不到 easel_core.h（在 Easel 目录跑一次 python3 scripts/amalgamate.py）";
+    if (!opt.easelDir.empty() && !existsU8(joinPath(opt.easelDir, "dist/easel_core.h"))) {
+        r.error = "找不到 easel_core.h（在 Easel 目录跑一次 python3 scripts/amalgamate.py）：" +
+                   joinPath(opt.easelDir, "dist/easel_core.h");
         return r;
     }
-    ++r.files;
+    std::string easelDirFwd = absPath(opt.easelDir);
+    for (char& c : easelDirFwd)
+        if (c == '\\') c = '/';
     writeTextU8(joinPath(hidden, "CMakeLists.txt"),
                 fill(kCMake, asciiOnly(name) ? name : "my_project"));
-    {
-        std::string readme = fill(kReadme, name);
-        std::string key = "{DATA}";
-        std::string data =
-            opt.fullSkeleton
-                ? "`data/example.json` 是输入数据，换成你自己的。\n"
-                  "想铺一张底图（地图、平面图、照片），把图片放进 `assets/` —— "
-                  "`src/app.cpp` 里有加载它的那一行。"
-                : "现在这份是**空工程**：一个 Hello 而已。要读数据文件、逐帧回放、画收敛曲线，"
-                  "新建工程时勾上「带回放的完整骨架」，或者去看 Easel 的 `examples/sort`。";
-        size_t at = readme.find(key);
-        if (at != std::string::npos) readme.replace(at, key.size(), data);
-        writeTextU8(joinPath(dir, "README.md"), readme);
-    }
-    writeTextU8(joinPath(dir, ".vscode/settings.json"), kSettings);
-    r.files += 3;
+    writeTextU8(joinPath(dir, ".vscode/settings.json"), fill(kSettings, name, easelDirFwd));
+    r.files += 2;
 
     // ---- 作品名写进标题 ----
+    static const char* const kTitlePlaceholders[] = {"MySketch", "我的作品", nullptr};
     std::string app;
     if (readTextU8(joinPath(dir, "src/app.cpp"), &app)) {
-        size_t at = app.find("app.title(\"我的作品\")");
-        if (at != std::string::npos) {
-            app.replace(at, std::strlen("app.title(\"我的作品\")"), "app.title(\"" + name + "\")");
-            writeTextU8(joinPath(dir, "src/app.cpp"), app);
+        bool changed = false;
+        for (const char* const* p = kTitlePlaceholders; *p; ++p) {
+            std::string needle = std::string("app.title(\"") + *p + "\")";
+            size_t      at = app.find(needle);
+            if (at != std::string::npos) {
+                app.replace(at, needle.size(), "app.title(\"" + name + "\")");
+                changed = true;
+                break;
+            }
         }
+        if (changed) writeTextU8(joinPath(dir, "src/app.cpp"), app);
     }
 
     EASEL_LOG("新建工程：%s（%d 个文件）", dir.c_str(), r.files);

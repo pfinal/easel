@@ -29,55 +29,26 @@
 
 ## Minimal example
 
+This is the entire content of a blank project's `src/app.cpp` (`Workbench -> New Project -> Skeleton: Blank`):
+
 ```cpp
 #include <easel/easel.h>
 using namespace easel;
 
-struct State {
-    int    count = 8;
-    double radius = 20.0;
-    std::vector<Vec2> points;
-};
-State S;
-
-void solve() {
-    S.points.clear();
-    for (int i = 0; i < S.count; ++i) {
-        double a = 2 * 3.14159265358979 * i / S.count;
-        S.points.push_back({std::cos(a) * S.radius, std::sin(a) * S.radius});
-    }
-}
-
 int main(int argc, char** argv) {
     App app(argc, argv);
-    app.title("Hello, Easel").size(1280, 800).theme(Theme::Forest());
-
-    app.onStart([&app] {
-        solve();
-        app.camera().fit(Rect::bounding(S.points), 80);
-    });
-
-    app.onDraw([&](Canvas& c) {
-        c.stroke(app.theme().accent, 2);
-        c.polyline(S.points, true);
-        c.fill(app.theme().accent);
-        for (const Vec2& p : S.points) c.dot(p, 6);
-        c.fill(app.theme().fg);
+    app.title("MySketch");
+    app.onDraw([](Canvas& c) {
         c.text({0, 0}, "Hello, Easel", Align::Center);
     });
-
-    app.onPanel([] {
-        if (ui::section("Parameters")) {
-            if (ui::slider("Points", &S.count, 3, 40)) solve();
-            if (ui::slider("Radius", &S.radius, 5.0, 60.0)) solve();
-        }
-    });
-
     return app.run();
 }
 ```
 
-Running it shows a ring of points and one line of "Hello"; dragging a slider recomputes it.
+Running it shows one line of text, "Hello, Easel", centered on an otherwise empty canvas.
+For a slightly bigger, interactive example (a ring of draggable-slider points), see
+[`examples/hello`](examples/hello) -- also available from the New Project dialog's
+"Skeleton" dropdown as "Example: hello".
 
 ![Empty project](docs/screenshot-hello.png)
 
@@ -90,15 +61,15 @@ git clone https://github.com/pfinal/easel.git && cd easel
 cmake --preset default && cmake --build --preset default
 ```
 
-`./build/default/workbench` opens the Workbench: "New Project" -> "Build & Run". This requires the Xcode command line tools (`xcode-select --install`) and CMake.
+`./build/default/Easel` opens the Workbench: "New Project" -> "Build & Run". This requires the Xcode command line tools (`xcode-select --install`) and CMake.
 
 ### Windows
 
-There is a no-install toolbox containing gcc, cmake, ninja, and Easel, assembled by `scripts/make_toolbox.py`. After extracting it, double-click `workbench.bat`. The toolbox's official build ships together with the first release.
+There is a no-install toolbox containing gcc, cmake, ninja, and Easel, assembled by `scripts/make_toolbox.py`. After extracting it, double-click `Easel.bat`. The toolbox's official build ships together with the first release.
 
 ## Workbench
 
-New Project / Build & Run / Stop / Build exe / Export source. A project runs as a separate process; clicking an error line jumps to the corresponding location in the source. A new project has only three files -- `README.md`, `src/app.cpp`, `src/solver.cpp` -- the build scripts and the library live in `.easel/`.
+New Project / Build & Run / Stop / Build exe / Export source. A project runs as a separate process; clicking an error line jumps to the corresponding location in the source. A blank project has only one file -- `src/app.cpp` -- the build scripts live in `.easel/` and the single-header library isn't copied at all, it's pointed straight at Easel's own `dist/`. The "Skeleton" dropdown can also start from the algorithm skeleton (data file, frame-by-frame replay, convergence chart) or from any bundled example. Project names must be ASCII (compilers don't handle non-ASCII paths well).
 
 ![Workbench](docs/screenshot-workbench.png)
 
@@ -112,7 +83,7 @@ Press F12 to open it: six pages -- Log (level / file:line / frame number / repea
 
 - [`docs/reference.md`](docs/reference.md) -- the full reference manual, in Chinese, with mapping tables from Scratch / Processing / openFrameworks.
 - [`docs/cheatsheet.md`](docs/cheatsheet.md) -- a one-page cheat sheet, in Chinese.
-- [`examples/`](examples/) -- `sort` (sorting visualization), `creative` (kaleidoscope / trail / noise terrain / sprite animation / sound).
+- [`examples/`](examples/) -- `hello` (a ring of points with sliders, the smallest interactive example), `sort` (sorting visualization), `creative` (kaleidoscope / trail / noise terrain / sprite animation / sound).
 
 ## Building from source
 
@@ -132,9 +103,9 @@ ctest --preset default
 | `include/` | public headers: `core.h` (no GUI, zero link dependencies), `app.h`, `canvas.h`, `camera.h`, `timeline.h`, `ui.h`, `audio.h`, `theme.h`, `file.h` |
 | `src/` | library implementation |
 | `workbench/` | Workbench: new project / build / run / stop / build exe / export source |
-| `template/` | starter project with a playback skeleton |
-| `template-hello/` | empty project template |
-| `examples/` | the `sort` and `creative` examples |
+| `template/` | algorithm-skeleton starter project (data file, playback, convergence chart) |
+| `template-hello/` | blank project template (one file: `src/app.cpp`) |
+| `examples/` | the `hello`, `sort`, and `creative` examples |
 | `docs/` | reference manual, cheat sheet, screenshots |
 | `scripts/` | `vendor.py` (offline dependencies), `make_toolbox.py` (Windows toolbox), `package.py` (release package) |
 | `windows-green/` | notes on the Windows no-install toolbox |

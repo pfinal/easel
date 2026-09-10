@@ -1,5 +1,5 @@
 // ============================================================================
-//  easel_core.h — Easel 0.1.0 单文件版（自动生成，请勿手改）
+//  easel_core.h — Easel 0.1.1 单文件版（自动生成，请勿手改）
 //
 //  由 scripts/amalgamate.py 从 include/easel/core.h + nlohmann/json 3.12.0 合成。
 //  改动请改仓库里的 include/easel/core.h，然后重新生成。
@@ -25572,10 +25572,10 @@ inline void swap(nlohmann::NLOHMANN_BASIC_JSON_TPL& j1, nlohmann::NLOHMANN_BASIC
 #ifndef EASEL_CORE_H
 #define EASEL_CORE_H
 
-#define EASEL_VERSION       "0.1.0"
+#define EASEL_VERSION       "0.1.1"
 #define EASEL_VERSION_MAJOR 0
 #define EASEL_VERSION_MINOR 1
-#define EASEL_VERSION_PATCH 0
+#define EASEL_VERSION_PATCH 1
 
 // ---------------------------------------------------------------- C++ 版本
 #if defined(_MSC_VER) && !defined(__clang__)
@@ -26429,7 +26429,7 @@ inline void parse(int argc, char** argv) {
             if (i > 1) {
                 std::string prev = argv[i - 1];
                 if (prev.rfind("--", 0) == 0 && prev.find('=') == std::string::npos) {
-                    // "--run" 是 workbench 自己的命令行 flag（编译并运行学生工程），和作品
+                    // "--run" 是工作台自己的命令行 flag（编译并运行学生工程），和作品
                     // App 的 "--edit-run"（打开编辑栏并编译运行一次）是两个不同的东西，
                     // 但都不带值，所以都要列在这里，否则后面的位置参数会被当成它们的值吞掉。
                     static const char* valueless[] = {"--solve",    "--doctor", "--quiet", "--help",

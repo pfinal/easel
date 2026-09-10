@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""一键出发布包：Release 的 exe + 完整源码 zip + 第三方许可证 + 对照发布清单自检。
+"""一键出发布包：Release 的 exe + 完整源码 zip + licenses + 对照发布清单自检。
 
-    python3 scripts/package.py ../我的作品 --name 我的作品
+    python3 scripts/package.py ../MySketch --name MySketch
 
 产出（在工程目录的 dist/ 下）：
-    我的作品-程序/            可双击运行：exe + assets + data + 运行说明.txt
-    我的作品-程序.zip
-    我的作品-源码.zip         源码，不含 build/
+    MySketch-release/         可双击运行：exe + assets + data + README.txt
+    MySketch-release.zip
+    MySketch-源码.zip         源码，不含 build/
     检查清单.txt              对照发布清单逐条核对的结果
 
 **要在哪个系统上运行，就在哪个系统上打包**（HANDOFF 里 10/8 那个检查点就是干这个的）。
@@ -103,7 +103,7 @@ def ensure_bundle_block(cmake_path):
 
 
 def collect_licenses(easel_dir, dest):
-    """把用到的第三方许可证收齐 —— MIT / OFL 分发时都要求带上。"""
+    """把用到的licenses收齐 —— MIT / OFL 分发时都要求带上。"""
     os.makedirs(dest, exist_ok=True)
     n = 0
     lic = os.path.join(easel_dir, "LICENSE")
@@ -146,7 +146,7 @@ def main():
 
     dist = os.path.join(proj, "dist")
     build = os.path.join(proj, "build", "release")
-    prog_dir = os.path.join(dist, f"{name}-程序")
+    prog_dir = os.path.join(dist, f"{name}-release")
     os.makedirs(dist, exist_ok=True)
 
     print("=== 1/5 Release 构建 ===")
@@ -161,7 +161,7 @@ def main():
         raise SystemExit(f"[打包] 在 {build} 里没找到 app / app.exe")
     print(f"    exe: {exe}  {os.path.getsize(exe)/1e6:.1f} MB")
 
-    print("=== 2/5 程序包 ===")
+    print("=== 2/5 release 包 ===")
     if os.path.isdir(prog_dir):
         shutil.rmtree(prog_dir)
     os.makedirs(prog_dir)
@@ -170,11 +170,11 @@ def main():
         s = os.path.join(proj, d)
         if os.path.isdir(s):
             shutil.copytree(s, os.path.join(prog_dir, d), ignore=SKIP)
-    nlic = collect_licenses(easel, os.path.join(prog_dir, "第三方许可证")) if has_easel else 0
-    with open(os.path.join(prog_dir, "运行说明.txt"), "w", encoding="utf-8") as f:
+    nlic = collect_licenses(easel, os.path.join(prog_dir, "licenses")) if has_easel else 0
+    with open(os.path.join(prog_dir, "README.txt"), "w", encoding="utf-8") as f:
         f.write(RUN_NOTE.format(name=name, exe=os.path.basename(exe)))
-    prog_zip = os.path.join(dist, f"{name}-程序.zip")
-    prog_size = zip_dir(prog_dir, prog_zip, f"{name}-程序")
+    prog_zip = os.path.join(dist, f"{name}-release.zip")
+    prog_size = zip_dir(prog_dir, prog_zip, f"{name}-release")
     print(f"    {os.path.relpath(prog_zip, proj)}  {prog_size/1e6:.1f} MB（含 {nlic} 份许可证）")
 
     print("=== 3/5 源码包 ===")
@@ -197,8 +197,9 @@ def main():
     if not args.no_deps and has_easel:
         eroot = os.path.join(root, "easel")
         os.makedirs(eroot)
-        for item in ("CMakeLists.txt", "CMakePresets.json", "LICENSE", "README.md",
-                     "include", "src", "assets", "scripts", "docs", "vendor"):
+        # 只带编出 app 所需要的（和 export_project.cpp 的 kE 对齐，D-36）：
+        # docs / scripts / README.md / CMakePresets.json 不进源码包。
+        for item in ("CMakeLists.txt", "cmake", "include", "src", "vendor", "assets", "LICENSE"):
             s = os.path.join(easel, item)
             if not os.path.exists(s):
                 continue
@@ -235,7 +236,7 @@ def main():
     total = prog_size + src_size
     check(total < 500e6, f"程序包 + 源码包 = {total/1e6:.0f} MB，离 500 MB 上限还有 "
                          f"{(500e6-total)/1e6:.0f} MB（视频另算）")
-    check(nlic > 0, f"带了 {nlic} 份第三方许可证")
+    check(nlic > 0, f"带了 {nlic} 份licenses")
     import platform
     win = platform.system() == "Windows"
     check(win, f"在 {platform.system()} 上打的包"

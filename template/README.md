@@ -3,8 +3,8 @@
 用 [Easel](https://github.com/pfinal/easel) 做的算法可视化程序。
 
 > **这是模板本身的说明，不是新建工程时生成的那份。**
-> 工作台「新建工程」出来的工程只有五样东西（`README.md` / `src/app.cpp` /
-> `src/solver.cpp` / `data/` / `assets/`），README 也是另外生成的短版（D-30）。
+> 工作台「新建工程」默认出来的是**空白工程**，只有一样东西：`src/app.cpp`（不再生成
+> README，D-36）。骨架下拉选「算法骨架」才会多出 `src/solver.cpp` / `data/` / `assets/`。
 > 这个目录保留完整布局：它既是新建工程的素材，也是「导出源码」展开时用的标准工程。
 
 ![模板工程跑起来的样子](docs/screenshot.png)
@@ -14,7 +14,7 @@
 
 ## 从哪儿开始
 
-**双击工作台**（Windows：工具箱里的 `工作台.bat`；Mac：`workbench`）。里面有：
+**双击工作台**（Windows：工具箱里的 `Easel.bat`；Mac：`Easel`）。里面有：
 
 | 按钮 | 干什么 |
 |---|---|
@@ -141,7 +141,7 @@ debug/                调试用例。这就是你的 bug 日志，别删
 
 ## 懒得敲命令
 
-- Windows：双击 `跑.bat`（先双击过工具箱里的 `启动.bat`）
+- Windows：双击 `跑.bat`（先双击过工具箱里的 `start.bat`）
 - Mac / Linux：`./跑.sh`
 
 两个脚本都是「没配置就配置，然后编译，然后带示例数据启动 App」。
@@ -152,11 +152,11 @@ debug/                调试用例。这就是你的 bug 日志，别删
 按 F9 → 「导出工程…」→ 填作品名 → 开始导出。出来的目录是自足的：
 
 ```
-我的作品/
+MySketch/
 ├─ src/ tests/ data/ assets/ debug/ .vscode/    你的东西
 ├─ CMakeLists.txt                               会自己发现下面那个 easel/
-├─ easel/                                       Easel 源码 + vendor/（全部依赖源码）
-├─ 第三方许可证/  怎么编译.txt  导出自检.txt
+├─ easel/                                       Easel 源码 + vendor/（编 app 所需的精简版）
+├─ licenses/  BUILD.txt  CHECK.txt
 ```
 
 拿到这份源码的机器**不用装 Easel、不用联网、不用加任何 cmake 参数**：
@@ -166,21 +166,21 @@ g++ -std=c++17 -DEASEL_STANDALONE src/solver.cpp -o solver   # 只要算法
 cmake -S . -B build && cmake --build build                   # 连界面一起
 ```
 
-`导出自检.txt` 会逐条列出核对结果，导出时还真的编了一次 `solver.cpp` 来验证。
-命令行等价物：`app --export ../dist/我的作品 --name 我的作品`。
+`CHECK.txt` 会逐条列出核对结果，导出时还真的编了一次 `solver.cpp` 来验证。
+命令行等价物：`app --export ../dist/MySketch --name MySketch`。
 
 **正式发布那一次（要 Python，多出 exe 和 zip）：**
 
 ```bash
-python3 ../easel/scripts/package.py . --name 我的作品
+python3 ../easel/scripts/package.py . --name MySketch
 ```
 
 在 `dist/` 下产出四样：
 
 | | |
 |---|---|
-| `我的作品-程序/` + `.zip` | Release 的 exe + assets + data + 运行说明.txt + 第三方许可证 |
-| `我的作品-源码.zip` | 源码，自动排掉 `build/`，含 Easel 与依赖（拿到这份源码的人能重新编译） |
+| `MySketch-release/` + `.zip` | Release 的 exe + assets + data + README.txt + licenses |
+| `MySketch-源码.zip` | 源码，自动排掉 `build/`，含 Easel 与依赖（拿到这份源码的人能重新编译） |
 | `检查清单.txt` | 打包时自动生成的核对结果 |
 
 **要在哪个系统上运行，就在哪个系统上打包**——在哪台机器上打包，就出哪台机器的 exe。

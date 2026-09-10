@@ -14,8 +14,8 @@
 | `cmake\` | 构建 GUI 工程要用 | 54 MB |
 | `ninja\` | 构建器，快 | 0.3 MB |
 | `easel\` | Easel 本体 + 模板工程 + **全部依赖的源码**（所以不用联网） | 45 MB |
-| `工作台.bat` | **从这里开始**：新建工程 / 编译 / 运行 / 停止 / 生成 exe / 导出源码。第一次双击会先把工作台自己编出来（几分钟） | |
-| `启动.bat` | 把上面几样加进本次会话的 PATH，开一个命令行窗口（要手动敲命令时才用） | |
+| `Easel.bat` | **从这里开始**：新建工程 / 编译 / 运行 / 停止 / 生成 exe / 导出源码。第一次双击会先把工作台自己编出来（几分钟） | |
+| `start.bat` | 把上面几样加进本次会话的 PATH，开一个命令行窗口（要手动敲命令时才用） | |
 
 zip **151 MB**，解压后 **509 MB**。
 
@@ -26,7 +26,7 @@ zip **151 MB**，解压后 **509 MB**。
 用什么写代码见下面那一节。
 
 > 写代码用 VS Code（或任何编辑器），**编译、运行、停止、生成 exe、导出源码走工作台**
-> （`工作台.bat`，D-29）。作品是工作台的子进程，所以改完界面代码点一下就能重跑。
+> （`Easel.bat`，D-29）。作品是工作台的子进程，所以改完界面代码点一下就能重跑。
 > 作品里还留了一栏 F9 编辑器当兜底 —— 机器上真没有 VS Code 时能改一行算法。
 
 ## 里面**没有**什么
@@ -67,11 +67,11 @@ python3 scripts/make_toolbox.py   # 2. 下三个组件、组装、打包
 ## 怎么用
 
 1. 解压到任意目录（`D:\代码酷` 之类，路径别带空格更省事）
-2. 双击 `启动.bat`
-3. 第一次把模板拷成自己的工程：
+2. 双击 `start.bat`
+3. 第一次把模板拷成自己的工程（工程名只能用英文，编译器对中文路径支持不好）：
    ```
-   xcopy /E /I easel\template 我的作品
-   cd 我的作品
+   xcopy /E /I easel\template MySketch
+   cd MySketch
    cmake --preset mingw -DEASEL_DIR=..\easel
    cmake --build --preset mingw
    build\mingw\bin\app.exe --open data\example.json --solve
@@ -146,6 +146,7 @@ g++ / gdb / cmake / ninja / Easel / 模板 / 依赖源码，17139 个文件都�
 - MinGW 编 nfd（系统文件对话框）——最不确定的一块。真编不过就先把文件对话框停掉，
   用 `--open` 参数指定文件，功能不受影响
 - `RtlCaptureStackBackTrace`（崩溃调用栈）在 MinGW 头文件里的声明
-- 机器上 `启动.bat` 拼出来的 PATH 对不对（三个目录：`w64devkit\bin`、`cmake\bin`、`ninja`）
-- 中文文件名（`启动.bat`、`跑.bat`）在 Windows 自带解压里会不会乱码 —— zip 里的
-  UTF-8 标志是置上的，Win10 以后应该没问题；万一乱码，包里还有一份同内容的 `start.bat`
+- 机器上 `start.bat` 拼出来的 PATH 对不对（三个目录：`w64devkit\bin`、`cmake\bin`、`ninja`）
+- 中文文件名（模板工程里的 `跑.bat`）在 Windows 自带解压里会不会乱码 —— 工具箱自己的
+  入口脚本（`start.bat` / `Easel.bat` / `export-prebuilt.bat`）现在都是纯 ASCII 文件名，
+  不受影响（D-36）

@@ -25,7 +25,7 @@ struct Drag {
 //
 //     int main(int argc, char** argv) {
 //         easel::App app(argc, argv);
-//         app.title("我的作品").size(1280, 800).theme(easel::Theme::Forest());
+//         app.title("MySketch").size(1280, 800).theme(easel::Theme::Forest());
 //         app.onDraw([](easel::Canvas& c){ ... });
 //         app.onPanel([]{ ... });
 //         return app.run();
@@ -81,6 +81,7 @@ public:
     bool        editorOpen() const;
     App&        editorWidth(float px);
     App&        editorEnabled(bool on);   // false = 连 F9 都不响应（工具类程序不需要它）
+    App&        debugConsoleEnabled(bool on);   // false = 连 F12 都不响应（工具类程序不需要调试台）
     // 导出一个「离了 Easel 也完整」的工程（命令行等价物：app --export <目录>）
     bool        exportProject(const std::string& outDir = {}, const std::string& name = {});
 
@@ -102,7 +103,7 @@ public:
     //   --doctor           打印环境自检然后退出，不开窗口
     //   --debug            启动就把 F12 调试台打开
     //   --edit             启动就把左边的编辑栏打开
-    //   --edit-run         打开编辑栏并立刻编译运行一次（CI 用；别和 workbench 自己的 --run 搞混）
+    //   --edit-run         打开编辑栏并立刻编译运行一次（CI 用；别和工作台自己的 --run 搞混）
     //   --export [目录]    导出一个能独立编译的完整工程，然后退出（不开窗口）
     //   --quiet            EASEL_TRACE / EASEL_LOG 不往终端刷屏
     //   --frames N         跑 N 帧自动退出（CI / 截图用）

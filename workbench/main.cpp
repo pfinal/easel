@@ -42,10 +42,12 @@ struct WB {
     char                 runArgs[192] = {0};
 
     // 新建工程对话框
-    char newName[128] = "我的作品";
-    char newParent[512] = {0};
-    bool newTests = false;
-    bool newFull = false;
+    char                     newName[128] = "MySketch";
+    char                     newParent[512] = {0};
+    bool                     newTests = false;
+    // 骨架下拉：0 空白 / 1 算法骨架 / 2+ 示例（exampleNames[newSkeleton - 2]，D-36）
+    int                      newSkeleton = 0;
+    std::vector<std::string> exampleNames;
 
     bool wantPackage = false;   // 「生成 exe」要多编一次 Release，分两步走
 };
@@ -62,6 +64,15 @@ const char* presetName() {
 #else
     return "default";
 #endif
+}
+
+// 新建工程对话框的默认父目录：Windows 上 D:\ 存在就用 D:\projects（不存在没关系，
+// createProject 会建），免得学生把工程建到 C 盘用户名带中文的路径下；其它平台用 cwd（D-36）。
+std::string defaultParentDir() {
+#if defined(_WIN32)
+    if (isDirU8("D:\\")) return "D:\\projects";
+#endif
+    return fs::cwd();
 }
 
 // 新式工程（D-30）：构建脚本和库都在 .easel/ 里，学生的根目录只有自己的文件。
@@ -267,7 +278,7 @@ void compileAndRun() {
 void finishPackage() {
     WB&         w = wb();
     std::string name = baseName(w.projectDir);
-    std::string dest = joinPath(joinPath(w.projectDir, "dist"), name + "-程序");
+    std::string dest = joinPath(joinPath(w.projectDir, "dist"), name + "-release");
     std::string exe = exeIn(releaseDir(w.projectDir));
     if (!existsU8(exe)) {
         addOut("没找到 Release 版的程序：" + exe, 1);
@@ -281,7 +292,7 @@ void finishPackage() {
     for (const char* d : {"assets", "data"})
         if (existsU8(joinPath(w.projectDir, d)))
             copyTreeU8(joinPath(w.projectDir, d), joinPath(dest, d), &files);
-    writeTextU8(joinPath(dest, "运行说明.txt"),
+    writeTextU8(joinPath(dest, "README.txt"),
                 name + "\n\n双击 " + name + " 就能运行。\n\n"
                 "Windows 上如果弹出蓝色的「Windows 已保护你的电脑」：\n"
                 "  点「更多信息」→「仍要运行」。这是没买代码签名证书的新程序的默认提示。\n\n"
@@ -397,16 +408,36 @@ void drawNewProjectPopup(float dpi) {
     ImGui::TextWrapped("从模板生成一个新工程：界面、逻辑、示例数据、测试都给好了，改就是了。");
     ImGui::Spacing();
     ImGui::InputText("作品名", w.newName, sizeof w.newName);
+    ImGui::TextDisabled("只能用英文字母、数字、下划线、连字符（编译器对中文路径支持不好）");
     ImGui::InputTextWithHint("放在哪", "选一个目录", w.newParent, sizeof w.newParent);
     ImGui::SameLine();
     if (ImGui::Button("选目录…")) {
         std::string d = file::folder(w.newParent[0] ? w.newParent : nullptr);
         if (!d.empty()) std::snprintf(w.newParent, sizeof w.newParent, "%s", d.c_str());
     }
-    ImGui::Checkbox("带回放的完整骨架（读数据文件、逐帧回放、收敛曲线、导出用例）", &w.newFull);
+    ImGui::TextDisabled("这个目录的路径也不能含中文");
+    ImGui::Spacing();
+
+    std::vector<std::string> options{"空白", "算法骨架（读数据、逐帧回放、收敛曲线）"};
+    for (const std::string& e : w.exampleNames) options.push_back("示例：" + e);
+    if (w.newSkeleton < 0 || w.newSkeleton >= (int)options.size()) w.newSkeleton = 0;
+    if (ImGui::BeginCombo("骨架", options[w.newSkeleton].c_str())) {
+        for (int i = 0; i < (int)options.size(); ++i) {
+            bool sel = (i == w.newSkeleton);
+            if (ImGui::Selectable(options[i].c_str(), sel)) w.newSkeleton = i;
+            if (sel) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+    }
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("不勾就是空工程：两个文件，画一个 Hello，从零开始写");
+        ImGui::SetTooltip(
+            "空白：一个文件，画个 Hello，从零开始写\n"
+            "算法骨架：读数据文件、逐帧回放、收敛曲线、导出用例\n"
+            "示例：Easel 自带的可运行例子，拿来改");
+
+    ImGui::BeginDisabled(w.newSkeleton != 1);   // 测试文件只对算法骨架有意义
     ImGui::Checkbox("顺便带一个测试文件 tests/test_solver.cpp", &w.newTests);
+    ImGui::EndDisabled();
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("不勾也没关系：以后新建这个文件，下次编译会自动带上");
     ImGui::Spacing();
@@ -418,7 +449,10 @@ void drawNewProjectPopup(float dpi) {
         o.parentDir = w.newParent;
         o.name = w.newName;
         o.withTests = w.newTests;
-        o.fullSkeleton = w.newFull;
+        if (w.newSkeleton == 1)
+            o.fullSkeleton = true;
+        else if (w.newSkeleton >= 2)
+            o.exampleDir = joinPath(joinPath(w.easelDir, "examples"), w.exampleNames[w.newSkeleton - 2]);
         NewProjectReport r = createProject(o);
         if (r.ok) {
             useProject(r.dir);
@@ -456,7 +490,8 @@ void draw(const Rect& r, const Theme& th, float dpi) {
 
     bool busy = w.proc.running();
     if (ImGui::Button("新建工程…")) {
-        if (!w.newParent[0]) std::snprintf(w.newParent, sizeof w.newParent, "%s", fs::cwd().c_str());
+        if (!w.newParent[0])
+            std::snprintf(w.newParent, sizeof w.newParent, "%s", defaultParentDir().c_str());
         ImGui::OpenPopup("新建工程");
     }
     ImGui::SameLine();
@@ -592,7 +627,8 @@ void draw(const Rect& r, const Theme& th, float dpi) {
 
 int main(int argc, char** argv) {
     App app(argc, argv);
-    app.title("代码酷工作台").size(1100, 720).theme(Theme::Forest()).editorEnabled(false);
+    app.title("Easel").size(1100, 720).theme(Theme::Forest()).editorEnabled(false)
+       .debugConsoleEnabled(false);   // 工具类程序不需要调试台
     app.statusBar(true);
 
     WB& w = wb();
@@ -607,14 +643,27 @@ int main(int argc, char** argv) {
     }
     loadConfig();
 
-    // workbench --new <放哪的目录> --name <作品名>：不开窗口，建完就走（CI 和老师批量建工程用）
+    // 新建工程对话框的「骨架」下拉里，示例那几项：扫 <easelDir>/examples 下每个带 main.cpp 的子目录
+    if (!w.easelDir.empty()) {
+        std::string exDir = joinPath(w.easelDir, "examples");
+        if (isDirU8(exDir))
+            for (const DirEntry& e : listDirU8(exDir))
+                if (e.isDir && existsU8(joinPath(joinPath(exDir, e.name), "main.cpp")))
+                    w.exampleNames.push_back(e.name);
+        std::sort(w.exampleNames.begin(), w.exampleNames.end());
+    }
+
+    // workbench --new <放哪的目录> --name <作品名> [--full | --example <名字>]：
+    // 不开窗口，建完就走（CI 和老师批量建工程用）
     if (cli::args().has("new")) {
         NewProjectOptions o;
         o.easelDir = w.easelDir;
         o.parentDir = absPath(cli::args().str("new"));
-        o.name = cli::args().str("name", "我的作品");
+        o.name = cli::args().str("name", "MySketch");
         o.withTests = cli::args().has("tests");
         o.fullSkeleton = cli::args().has("full");
+        if (cli::args().has("example"))
+            o.exampleDir = joinPath(joinPath(w.easelDir, "examples"), cli::args().str("example"));
         NewProjectReport rep = createProject(o);
         std::printf("%s\n", rep.ok ? ("建好了：" + rep.dir + "（" + std::to_string(rep.files) +
                                        " 个文件）").c_str()
@@ -637,6 +686,6 @@ int main(int argc, char** argv) {
     app.onKey([](int key) {
         if (key == ImGuiKey_F5) compileAndRun();
     });
-    app.status("代码酷工作台");
+    app.status("Easel");
     return app.run();
 }

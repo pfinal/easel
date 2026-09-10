@@ -165,14 +165,14 @@ ExportReport exportProject(const ExportOptions& opt) {
     }
 
     std::string name = opt.name.empty() ? baseName(project) : opt.name;
-    if (name.empty()) name = "我的作品";
+    if (name.empty()) name = "MySketch";
     std::string root = opt.outDir.empty() ? joinPath(joinPath(project, "dist"), name)
                                           : absPath(opt.outDir);
 
-    // 已经有东西了：只有确认是上一次导出（有 导出自检.txt）才覆盖，
+    // 已经有东西了：只有确认是上一次导出（有 CHECK.txt）才覆盖，
     // 别人的目录一律不碰 —— 手一滑填了个真目录，不能给人删了。
     if (existsU8(root)) {
-        if (!existsU8(joinPath(root, "导出自检.txt"))) {
+        if (!existsU8(joinPath(root, "CHECK.txt"))) {
             r.ok = false;
             r.error = root + " 已经存在，而且不像是上一次导出的结果。换个名字或者换个目录。";
             return r;
@@ -207,8 +207,9 @@ ExportReport exportProject(const ExportOptions& opt) {
                 return r;
             }
         }
-        // 单头库回到 src/ 旁边：标准工程里它就该在那儿
-        if (copyFileU8(joinPath(project, ".easel/easel_core.h"), joinPath(root, "src/easel_core.h")))
+        // 单头库回到 src/ 旁边：标准工程里它就该在那儿（不再拷进 .easel/，直接从
+        // Easel 目录的 dist/ 摊平版取，D-36）
+        if (copyFileU8(joinPath(easel, "dist/easel_core.h"), joinPath(root, "src/easel_core.h")))
             ++c.files;
         // 构建脚本用模板那份标准的（它带 [easel:bundled]，认得包里自带的 easel/）
         std::string tpl = joinPath(easel, "template");
@@ -250,14 +251,16 @@ ExportReport exportProject(const ExportOptions& opt) {
         if (easel.empty() || !existsU8(joinPath(easel, "CMakeLists.txt"))) {
             check(&r, false, "找不到 Easel 源码 —— 导出包里没有界面部分，编不出 app", true);
         } else {
-            static const char* const kE[] = {"CMakeLists.txt", "CMakePresets.json", "LICENSE",
-                                             "README.md", "include", "src", "assets", "scripts",
-                                             "docs", "vendor", nullptr};
+            // 只留编出 app 所需要的：cmake（easelConfig 模板）、include/src（库本体）、
+            // vendor（依赖源码）、assets（根 CMakeLists 的 POST_BUILD 会拷它，缺了会报错）、
+            // LICENSE。docs / scripts / README.md / CMakePresets.json 不进导出包。
+            static const char* const kE[] = {"CMakeLists.txt", "cmake", "include", "src",
+                                             "vendor", "assets", "LICENSE", nullptr};
             std::string eroot = joinPath(root, "easel");
             for (const char* const* p = kE; *p; ++p)
                 copyIfExists(joinPath(easel, *p), joinPath(eroot, *p), &c);
             haveVendor = isDirU8(joinPath(easel, "vendor"));
-            collectLicenses(easel, joinPath(root, "第三方许可证"), &licenses, &c);
+            collectLicenses(easel, joinPath(root, "licenses"), &licenses, &c);
         }
     }
 
@@ -268,7 +271,7 @@ ExportReport exportProject(const ExportOptions& opt) {
     // ---- 4. 说明书 ----
     // 新建工程时库文件被搬进了 .easel/（D-29），裸 g++ 那条命令要带 -I
     bool hiddenCore = existsU8(joinPath(root, ".easel/easel_core.h"));
-    writeTextU8(joinPath(root, "怎么编译.txt"), howToBuild(name, opt.withEasel, hiddenCore));
+    writeTextU8(joinPath(root, "BUILD.txt"), howToBuild(name, opt.withEasel, hiddenCore));
 
     // ---- 5. 自检：一条条对着「完整」的定义核 ----
     check(&r, existsU8(joinPath(root, "src/solver.cpp")), "有 src/solver.cpp（算法本体）");
@@ -341,11 +344,11 @@ ExportReport exportProject(const ExportOptions& opt) {
         for (size_t i = 0; i < missing.size(); ++i) txt += (i ? "、" : "") + missing[i];
         txt += "\n";
     }
-    writeTextU8(joinPath(root, "导出自检.txt"), txt);
+    writeTextU8(joinPath(root, "CHECK.txt"), txt);
     r.checklist = txt;
 
     EASEL_LOG("导出工程：%s（%d 个文件，%.1f MB，%s）", root.c_str(), c.files, c.bytes / 1e6,
-              r.ok ? "自检全过" : "自检有问题，看 导出自检.txt");
+              r.ok ? "自检全过" : "自检有问题，看 CHECK.txt");
     return r;
 }
 

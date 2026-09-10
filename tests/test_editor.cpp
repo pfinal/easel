@@ -4,8 +4,25 @@
 
 #include "../src/internal.h"
 
+#include <cstdlib>
+
 using namespace easel;
 using namespace easel::internal;
+
+namespace {
+// 系统临时目录：跟仓库检出到哪个路径无关（D-36 的 ASCII 父目录校验需要一个保证是
+// ASCII 的地方建测试工程；fs::cwd() 在某些机器上可能落在带中文的路径下）。
+std::string systemTempDir() {
+#if defined(_WIN32)
+    const char* t = std::getenv("TEMP");
+    if (!t) t = std::getenv("TMP");
+    return t ? t : "C:\\Windows\\Temp";
+#else
+    const char* t = std::getenv("TMPDIR");
+    return t && *t ? t : "/tmp";
+#endif
+}
+}  // namespace
 
 TEST_CASE("诊断行解析：能认出文件、行、列和严重程度") {
     std::string f;
@@ -119,7 +136,7 @@ TEST_CASE("looksLikeProject：只有 src/ 目录不算数，甚至只有 app.cpp
 TEST_CASE("导出工程：目录结构、自检文件、不覆盖别人的目录") {
     std::string tmp = joinPath(fs::cwd(), "test_export_tmp");
     removeTreeU8(tmp);   // 上一次跑剩下的先清掉，ctest 连跑多次才不会撞上「已经导过一次」
-    std::string out = joinPath(tmp, "作品");
+    std::string out = joinPath(tmp, "Work");
     const EditorPaths& paths = editorPaths();   // 测试跑在 easel 仓库里，template/ 就在旁边
 
     ExportOptions opt;
@@ -128,14 +145,14 @@ TEST_CASE("导出工程：目录结构、自检文件、不覆盖别人的目录
     // （它现在确实不会了，这正是 D-28 那次回归要修的）。
     opt.projectDir = joinPath(paths.easelDir.empty() ? fs::cwd() : paths.easelDir, "template");
     opt.outDir = out;
-    opt.name = "作品";
+    opt.name = "Work";
     opt.withEasel = false;   // 测试里不拷 vendor/，太重
     opt.verify = false;
     ExportReport r = exportProject(opt);
 
     CHECK(r.error.empty());
-    CHECK(existsU8(joinPath(out, "导出自检.txt")));
-    CHECK(existsU8(joinPath(out, "怎么编译.txt")));
+    CHECK(existsU8(joinPath(out, "CHECK.txt")));
+    CHECK(existsU8(joinPath(out, "BUILD.txt")));
     CHECK(existsU8(joinPath(out, "CMakeLists.txt")));
     CHECK_FALSE(existsU8(joinPath(out, "build")));   // 构建产物不该进交付物
     CHECK(r.files > 0);
@@ -145,49 +162,69 @@ TEST_CASE("导出工程：目录结构、自检文件、不覆盖别人的目录
     CHECK(again.error.empty());
 
     // 别人的目录：一律不碰
-    std::string foreign = joinPath(tmp, "别人的目录");
+    std::string foreign = joinPath(tmp, "foreign");
     makeDirsU8(foreign);
-    writeTextU8(joinPath(foreign, "重要文件.txt"), "别删我");
+    writeTextU8(joinPath(foreign, "important.txt"), "别删我");
     ExportOptions o2 = opt;
     o2.outDir = foreign;
     ExportReport r2 = exportProject(o2);
     CHECK_FALSE(r2.ok);
     CHECK_FALSE(r2.error.empty());
-    CHECK(existsU8(joinPath(foreign, "重要文件.txt")));
+    CHECK(existsU8(joinPath(foreign, "important.txt")));
 }
 
-TEST_CASE("新建工程：作品名进 CMakeLists / app.cpp，库文件搬进 .easel/") {
-    std::string tmp = joinPath(fs::cwd(), "test_newproj_tmp");
+TEST_CASE("新建工程：作品名进 CMakeLists / app.cpp，构建脚本进 .easel/，单头库不拷贝") {
+    // 用系统临时目录而不是 fs::cwd()：D-36 的父目录 ASCII 校验要求这个目录本身干净，
+    // 跟仓库检出到哪个路径无关。
+    std::string tmp = joinPath(systemTempDir(), "easel_test_newproj_tmp");
     removeTreeU8(tmp);   // 上一次跑剩下的先清掉，ctest 连跑多次才不会撞上「已经建过一次」
     makeDirsU8(tmp);
     const EditorPaths& paths = editorPaths();   // 测试跑在 easel 仓库里，template/ 就在旁边
+    std::string easelDir = paths.easelDir.empty() ? fs::cwd() : paths.easelDir;
 
     NewProjectOptions o;
-    o.easelDir = paths.easelDir.empty() ? fs::cwd() : paths.easelDir;
+    o.easelDir = easelDir;
     o.parentDir = tmp;
-    o.name = "测试作品";
-    NewProjectReport r = createProject(o);   // 默认：空工程（三个文件，D-32）
+    o.name = "TestApp";
+    NewProjectReport r = createProject(o);   // 默认：空工程（一个文件，D-36）
 
     REQUIRE_MESSAGE(r.ok, r.error);
-    // 学生看到的就这几样，别的一律不许出现在根目录
+    // 学生看到的就这一个文件，别的一律不许出现在根目录
     CHECK(existsU8(joinPath(r.dir, "src/app.cpp")));
-    CHECK(existsU8(joinPath(r.dir, "src/solver.cpp")));
-    CHECK(existsU8(joinPath(r.dir, "README.md")));
+    CHECK_FALSE(existsU8(joinPath(r.dir, "src/solver.cpp")));   // 空工程没有算法文件
+    CHECK_FALSE(existsU8(joinPath(r.dir, "README.md")));        // 不再生成 README（D-36）
     for (const char* junk : {"CMakeLists.txt", "CMakePresets.json", "跑.sh", "跑.bat", "run.bat",
                              "docs", "build", "tests", "src/easel_core.h", "data", "assets"})
         CHECK_MESSAGE(!existsU8(joinPath(r.dir, junk)), junk);
 
-    // 脚手架全在 .easel/ 里
-    CHECK(existsU8(joinPath(r.dir, ".easel/easel_core.h")));
+    // ls 根目录（不算隐藏项）只有 src
+    {
+        std::vector<DirEntry> top = listDirU8(r.dir);
+        std::vector<std::string> visible;
+        for (const DirEntry& e : top)
+            if (!e.name.empty() && e.name[0] != '.') visible.push_back(e.name);
+        REQUIRE(visible.size() == 1);
+        CHECK(visible[0] == "src");
+    }
+
+    // 构建脚本全在 .easel/ 里，但单头库不拷贝进去了（D-36：直接指到 <easelDir>/dist）
     CHECK(existsU8(joinPath(r.dir, ".easel/CMakeLists.txt")));
+    CHECK_FALSE(existsU8(joinPath(r.dir, ".easel/easel_core.h")));
 
     std::string cmake, appcpp, settings;
     REQUIRE(readTextU8(joinPath(r.dir, ".easel/CMakeLists.txt"), &cmake));
     REQUIRE(readTextU8(joinPath(r.dir, "src/app.cpp"), &appcpp));
     REQUIRE(readTextU8(joinPath(r.dir, ".vscode/settings.json"), &settings));
     CHECK(cmake.find("${PROJ}/src/app.cpp") != std::string::npos);
-    CHECK(appcpp.find("app.title(\"测试作品\")") != std::string::npos);
+    CHECK(cmake.find("EASEL_CORE_DIR") != std::string::npos);
+    CHECK(appcpp.find("app.title(\"TestApp\")") != std::string::npos);
     CHECK(settings.find("\"files.exclude\"") != std::string::npos);
+    CHECK(settings.find("/dist") != std::string::npos);     // 单头库 include 路径
+    CHECK(settings.find("/include") != std::string::npos);  // 分头文件 include 路径
+    // 预编译包和源码树的版本核对（B-4）：这两个戳都得被生成的构建脚本用到，
+    // 不然预编译包和源码对不上号的问题会被悄悄放过
+    CHECK(cmake.find("easel-prebuilt.json") != std::string::npos);
+    CHECK(cmake.find("VERSION.json") != std::string::npos);
 
     // 同一个名字再建一次：拒绝，且不动已有的东西
     NewProjectReport again = createProject(o);
@@ -199,14 +236,30 @@ TEST_CASE("新建工程：作品名进 CMakeLists / app.cpp，库文件搬进 .e
     bad.name = "a/b";
     CHECK_FALSE(createProject(bad).ok);
 
-    // 勾了「完整骨架」才有数据文件和示例数据
+    // 中文作品名直接拒绝，并且说清楚原因（D-36：编译器对中文路径支持不好）
+    NewProjectOptions badName = o;
+    badName.name = "中文";
+    NewProjectReport badNameReport = createProject(badName);
+    CHECK_FALSE(badNameReport.ok);
+    CHECK(badNameReport.error.find("英文字母") != std::string::npos);
+
+    // 父目录含中文也拒绝
+    NewProjectOptions badParent = o;
+    badParent.name = "AnotherApp";
+    badParent.parentDir = joinPath(tmp, "中文目录");
+    NewProjectReport badParentReport = createProject(badParent);
+    CHECK_FALSE(badParentReport.ok);
+    CHECK(badParentReport.error.find("中文") != std::string::npos);
+
+    // 勾了「算法骨架」才有数据文件和示例数据
     NewProjectOptions full = o;
-    full.name = "完整骨架";
+    full.name = "Full";
     full.fullSkeleton = true;
     NewProjectReport fr = createProject(full);
     REQUIRE_MESSAGE(fr.ok, fr.error);
     CHECK(existsU8(joinPath(fr.dir, "data/example.json")));
-    CHECK(existsU8(joinPath(fr.dir, ".easel/easel_core.h")));
+    CHECK(existsU8(joinPath(fr.dir, "src/solver.cpp")));
+    CHECK_FALSE(existsU8(joinPath(fr.dir, ".easel/easel_core.h")));
     CHECK_FALSE(existsU8(joinPath(fr.dir, "CMakeLists.txt")));
 
     // parentDir 指向一个还不存在的多级目录：自动建出来（CI 里 --new /tmp/blank 这种）
@@ -214,8 +267,18 @@ TEST_CASE("新建工程：作品名进 CMakeLists / app.cpp，库文件搬进 .e
     CHECK_FALSE(existsU8(deepParent));
     NewProjectOptions deep = o;
     deep.parentDir = deepParent;
-    deep.name = "深层工程";
+    deep.name = "Deep";
     NewProjectReport dr = createProject(deep);
     REQUIRE_MESSAGE(dr.ok, dr.error);
-    CHECK(existsU8(joinPath(deepParent, "深层工程/src/app.cpp")));
+    CHECK(existsU8(joinPath(deepParent, "Deep/src/app.cpp")));
+
+    // --example hello：从 examples/hello/main.cpp 建，src/app.cpp 里含 Hello
+    NewProjectOptions ex = o;
+    ex.name = "Ring";
+    ex.exampleDir = joinPath(joinPath(easelDir, "examples"), "hello");
+    NewProjectReport er = createProject(ex);
+    REQUIRE_MESSAGE(er.ok, er.error);
+    std::string exApp;
+    REQUIRE(readTextU8(joinPath(er.dir, "src/app.cpp"), &exApp));
+    CHECK(exApp.find("Hello") != std::string::npos);
 }
