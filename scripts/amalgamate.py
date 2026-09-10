@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""把 include/easel/core.h + nlohmann/json.hpp 合成一个 easel_core.h（stb 风格）。
+"""把 include/easel/core.h + nlohmann/json.hpp 合成一个 easel.hpp（stb 风格）。
 
 学生的 solver.cpp 只 #include 这一个文件，然后：
 
@@ -70,13 +70,13 @@ def build(core_path, json_path):
         jver = m.group(1)
 
     banner = f"""// ============================================================================
-//  easel_core.h — Easel {ver} 单文件版（自动生成，请勿手改）
+//  easel.hpp — Easel {ver} 单文件版（自动生成，请勿手改）
 //
 //  由 scripts/amalgamate.py 从 include/easel/core.h + nlohmann/json {jver} 合成。
 //  改动请改仓库里的 include/easel/core.h，然后重新生成。
 //
 //  用法：
-//      #include "easel_core.h"
+//      #include "easel.hpp"
 //      g++ -std=c++17 -DEASEL_STANDALONE solver.cpp && ./a.out
 //
 //  Easel: MIT · 代码酷 daimaku.net
@@ -102,8 +102,8 @@ def build(core_path, json_path):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--json", help="nlohmann json.hpp 单文件路径")
-    ap.add_argument("--out", default=os.path.join(ROOT, "dist", "easel_core.h"))
-    ap.add_argument("--also", action="append", default=[os.path.join(ROOT, "template", "src", "easel_core.h")],
+    ap.add_argument("--out", default=os.path.join(ROOT, "dist", "easel.hpp"))
+    ap.add_argument("--also", action="append", default=[os.path.join(ROOT, "template", "src", "easel.hpp")],
                     help="同时写一份到这里（默认同步模板工程）")
     ap.add_argument("--check", action="store_true", help="只检查是否最新，不写文件")
     args = ap.parse_args()

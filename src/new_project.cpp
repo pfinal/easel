@@ -7,8 +7,8 @@
 //
 // 骨架下拉选「算法骨架」才会多出 src/solver.cpp、data/example.json、assets/map.png。
 // 构建脚本、构建产物全在 .easel/ 里，你不用知道它存在；单头库不拷贝，直接指到
-// Easel 目录的 dist/easel_core.h。「导出源码」时再展开成结构清晰的标准工程
-//（CMakeLists 在根目录、easel_core.h 在 src/）。
+// Easel 目录的 dist/easel.hpp。「导出源码」时再展开成结构清晰的标准工程
+//（CMakeLists 在根目录、easel.hpp 在 src/）。
 #include "internal.h"
 
 #include <cstdio>
@@ -119,7 +119,7 @@ else()
   FetchContent_MakeAvailable(easel)
 endif()
 
-# solver / tests 直接 #include "easel_core.h"（单头库），不经过 easel::easel 这个 target，
+# solver / tests 直接 #include "easel.hpp"（单头库），不经过 easel::easel 这个 target，
 # 所以要单独给一条 include 路径。不拷一份进工程，直接指到 dist/ 下摊平好的那份：
 # EASEL_DIR 有定义（预编译包或本地源码两条路）就在 ${EASEL_DIR}/dist；
 # FetchContent 远程拉的话在 ${easel_SOURCE_DIR}/dist —— 两边都是 git 仓库里现成的文件。
@@ -152,7 +152,7 @@ if(EXISTS "${PROJ}/src/solver.cpp")
   target_compile_definitions(solver PRIVATE EASEL_STANDALONE)
   target_include_directories(solver PRIVATE "${PROJ}/src" "${EASEL_CORE_DIR}")
   if(WIN32)
-    # cli::parse() 用 CommandLineToArgvW（shellapi.h）把命令行转成 UTF-8；solver 裸编 easel_core.h，
+    # cli::parse() 用 CommandLineToArgvW（shellapi.h）把命令行转成 UTF-8；solver 裸编 easel.hpp，
     # 不经过 easel::easel，这里要单独链一次 shell32。
     target_link_libraries(solver PRIVATE shell32)
   endif()
@@ -304,9 +304,9 @@ NewProjectReport createProject(const NewProjectOptions& opt) {
 
     // ---- 脚手架：全进 .easel/，你看不见（单头库不拷贝，直接指到 <easelDir>/dist）----
     std::string hidden = joinPath(dir, ".easel");
-    if (!opt.easelDir.empty() && !existsU8(joinPath(opt.easelDir, "dist/easel_core.h"))) {
-        r.error = "找不到 easel_core.h（在 Easel 目录跑一次 python3 scripts/amalgamate.py）：" +
-                   joinPath(opt.easelDir, "dist/easel_core.h");
+    if (!opt.easelDir.empty() && !existsU8(joinPath(opt.easelDir, "dist/easel.hpp"))) {
+        r.error = "找不到 easel.hpp（在 Easel 目录跑一次 python3 scripts/amalgamate.py）：" +
+                   joinPath(opt.easelDir, "dist/easel.hpp");
         return r;
     }
     std::string easelDirFwd = absPath(opt.easelDir);

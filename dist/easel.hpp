@@ -1,11 +1,11 @@
 // ============================================================================
-//  easel_core.h — Easel 0.1.1 单文件版（自动生成，请勿手改）
+//  easel.hpp — Easel 0.1.1 单文件版（自动生成，请勿手改）
 //
 //  由 scripts/amalgamate.py 从 include/easel/core.h + nlohmann/json 3.12.0 合成。
 //  改动请改仓库里的 include/easel/core.h，然后重新生成。
 //
 //  用法：
-//      #include "easel_core.h"
+//      #include "easel.hpp"
 //      g++ -std=c++17 -DEASEL_STANDALONE solver.cpp && ./a.out
 //
 //  Easel: MIT · 代码酷 daimaku.net

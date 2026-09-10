@@ -20,7 +20,7 @@ src/solver.cpp   ← 你唯一写算法的文件
    └─ 界面     src/app.cpp             #include "solver.cpp"        + Easel
 ```
 
-规矩：`solver.cpp` 只 include `easel_core.h` 和标准库；每个可执行文件恰好 include 它一次；
+规矩：`solver.cpp` 只 include `easel.hpp` 和标准库；每个可执行文件恰好 include 它一次；
 **断点打在 `solver.cpp` 上，三个入口都能停**。
 
 ## 几何
@@ -125,7 +125,7 @@ g++ -std=c++17 -DEASEL_STANDALONE src/solver.cpp -o solver    # 只要算法，�
 cmake -S . -B build && cmake --build build                    # 连界面一起，不用给任何参数
 ```
 
-因为包里带着 `src/easel_core.h`（单头零依赖）、`easel/`（库源码）和 `easel/vendor/`
+因为包里带着 `src/easel.hpp`（单头零依赖）、`easel/`（库源码）和 `easel/vendor/`
 （全部第三方依赖的源码），顶层 `CMakeLists.txt` 会自己发现自带的 `easel/`。
 导出完会写一份 `CHECK.txt`，逐条核对上面这些，并**真的编一次** `solver.cpp` 来验证。
 

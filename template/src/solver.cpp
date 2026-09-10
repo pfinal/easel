@@ -9,11 +9,11 @@
 //      tests/test_solver.cpp #include "../src/solver.cpp" -> 对拍与回归
 //
 //  三条规矩：
-//    1. 这个文件只 #include "easel_core.h" 和标准库。不要在这里 #include <imgui.h>。
+//    1. 这个文件只 #include "easel.hpp" 和标准库。不要在这里 #include <imgui.h>。
 //    2. 每个可执行文件恰好 #include 它一次。没有 .h、没有声明重复、没有链接顺序。
 //    3. 断点打在这个文件里 —— 三个入口都能停下来。
 // ============================================================================
-#include "easel_core.h"
+#include "easel.hpp"
 
 #include <iostream>
 #include <string>

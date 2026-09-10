@@ -228,8 +228,8 @@ def main():
         names = z.namelist()
     check(not any("/build/" in n or n.startswith("build/") for n in names), "源码包里没有 build/")
     check(any(n.endswith("src/solver.cpp") for n in names), "源码包里有 src/solver.cpp")
-    check(any(n.endswith("src/easel_core.h") for n in names),
-          "源码包里有 src/easel_core.h（一条 g++ 就能编算法）")
+    check(any(n.endswith("src/easel.hpp") for n in names),
+          "源码包里有 src/easel.hpp（一条 g++ 就能编算法）")
     check(bundled, "顶层 CMakeLists 会自己发现包里的 easel/（不用加 -DEASEL_DIR）")
     check(any("/tests/" in n for n in names), "源码包里有 tests/")
     check(any("/data/" in n for n in names), "源码包里有 data/")

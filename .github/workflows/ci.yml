@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: dist/easel_core.h 是不是最新的
+      - name: dist/easel.hpp 是不是最新的
         run: python3 scripts/amalgamate.py --check
       - name: g++ 一条命令编译并运行
         run: |
@@ -147,11 +147,11 @@ jobs:
           ls -a
           # 脚手架一律不许出现在根目录
           for junk in CMakeLists.txt CMakePresets.json 跑.sh 跑.bat run.bat docs build tests \
-                      src/easel_core.h README.md; do
+                      src/easel.hpp README.md; do
             if [ -e "$junk" ]; then echo "根目录里不该有 $junk"; exit 1; fi
           done
           test -f src/app.cpp && test -f src/solver.cpp
-          test ! -f .easel/easel_core.h && test -f .easel/CMakeLists.txt
+          test ! -f .easel/easel.hpp && test -f .easel/CMakeLists.txt
           grep -q '"files.exclude"' .vscode/settings.json
           # 单头库不拷贝，直接指到 Easel 目录的 dist/（D-36）；裸 g++ 还得能编
           # （D-23 那条铁律不许因为折叠布局失效）
@@ -167,7 +167,7 @@ jobs:
           cd /tmp/np/Demo
           ./.easel/build/bin/app --export /tmp/np/out/Demo --name Demo
           cd /tmp/np/out/Demo
-          test -f CMakeLists.txt && test -f src/easel_core.h
+          test -f CMakeLists.txt && test -f src/easel.hpp
           test ! -d .easel
           if grep -q '\[×\]' CHECK.txt; then cat CHECK.txt; exit 1; fi
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release 2>&1 | tee cfg.log

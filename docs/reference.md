@@ -156,7 +156,7 @@ src/solver.cpp   ← 你唯一写算法的文件：数据结构 + solve() + 命�
 `solver.cpp` 是一份完整、能自己编译运行的程序：文件末尾一段 `#ifdef EASEL_STANDALONE`
 包着 `main`。`app.cpp` 和 `tests/test_solver.cpp` 用 `#include` 把它整个搬过去（unity
 include）——这样三个入口是**同一份代码**，断点打在 `solver.cpp` 上，三个入口都能停。
-规矩：`solver.cpp` 只 `#include` 标准库和 `easel_core.h`（或 `<easel/core.h>`），不能出现
+规矩：`solver.cpp` 只 `#include` 标准库和 `easel.hpp`（或 `<easel/core.h>`），不能出现
 `<imgui.h>`；每个可执行文件恰好 `#include` 它一次。
 
 ```cpp
@@ -187,6 +187,8 @@ g++ -std=c++17 -DEASEL_STANDALONE src/solver.cpp -o solver && ./solver data/exam
 从编译结果里消失，不会和 `doctest` 或 `App` 自己的 `main` 打架。
 
 ---
+
+单头版 `easel.hpp` 和多头版 `<easel/easel.h>` 是同一份代码的两种发行形式，二选一：命令行程序用单头，界面程序用多头。两个都 include 能编过，但没有意义。
 
 ## 2. 画布与坐标
 

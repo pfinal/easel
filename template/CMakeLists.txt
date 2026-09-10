@@ -70,7 +70,7 @@ target_compile_definitions(solver PRIVATE EASEL_STANDALONE)
 target_include_directories(solver PRIVATE src)
 if(WIN32)
   # cli::parse() 用 CommandLineToArgvW（shellapi.h）把命令行转成 UTF-8；solver 不链 easel::easel，
-  # 裸编 easel_core.h，所以这里要单独链一次。
+  # 裸编 easel.hpp，所以这里要单独链一次。
   target_link_libraries(solver PRIVATE shell32)
 endif()
 

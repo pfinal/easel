@@ -75,7 +75,7 @@ Windows 上把 `./build/default/bin/solver` 换成 `.\build\default\bin\solver.e
 2. 工具 → 编译器选项 → 编译时加入：`-std=c++17 -DEASEL_STANDALONE`
 3. F9 编译、F10 运行、F5 调试
 
-断点、单步、看变量，和普通 C++ 程序一模一样。`src/easel_core.h` 就在旁边，不用管它。
+断点、单步、看变量，和普通 C++ 程序一模一样。`src/easel.hpp` 就在旁边，不用管它。
 
 等到要做界面了（`app.cpp`）才需要 CMake —— 那时候再看下面。
 
@@ -118,7 +118,7 @@ g++ -std=c++17 -DEASEL_STANDALONE src/solver.cpp -o solver && ./solver data/exam
 ```
 src/solver.cpp        你的算法、数据结构、全局状态 S
 src/app.cpp           界面接线（main 就是一份清单，没有算法）
-src/easel_core.h      Easel 的单文件核心（自动生成的，别手改）
+src/easel.hpp      Easel 的单文件核心（自动生成的，别手改）
 tests/test_solver.cpp 测试与对拍
 data/                 输入数据（JSON）
 assets/               底图、字体之类

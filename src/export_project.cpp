@@ -5,7 +5,7 @@
 // 用 package.py，平时导出用这个按钮 —— 两边产出的目录结构是同一个。
 //
 // 「完整」的定义（D-28）：把导出的目录拷到一台没装过任何东西、也不联网的机器上，
-//   1. 一条 g++ 能编 src/solver.cpp（因为 src/easel_core.h 就在旁边，零依赖）；
+//   1. 一条 g++ 能编 src/solver.cpp（因为 src/easel.hpp 就在旁边，零依赖）；
 //   2. cmake + 编译器能编出整个界面程序（因为 easel/ 和它的 vendor/ 都在包里，
 //      顶层 CMakeLists 会自己发现 easel/，不用加任何参数、不用 FetchContent 联网）。
 #include "internal.h"
@@ -187,7 +187,7 @@ ExportReport exportProject(const ExportOptions& opt) {
 
     // ---- 1. 工程本体 ----
     // 新式工程（D-30）的脚手架藏在 .easel/ 里；导出时**展开成标准布局** ——
-    // 拿到的是一个再普通不过的 CMake 工程：根目录 CMakeLists.txt、src/easel_core.h。
+    // 拿到的是一个再普通不过的 CMake 工程：根目录 CMakeLists.txt、src/easel.hpp。
     Counter                  c;
     std::vector<std::string> missing;
     bool folded = existsU8(joinPath(project, ".easel/CMakeLists.txt"));
@@ -209,7 +209,7 @@ ExportReport exportProject(const ExportOptions& opt) {
         }
         // 单头库回到 src/ 旁边：标准工程里它就该在那儿（不再拷进 .easel/，直接从
         // Easel 目录的 dist/ 摊平版取，D-36）
-        if (copyFileU8(joinPath(easel, "dist/easel_core.h"), joinPath(root, "src/easel_core.h")))
+        if (copyFileU8(joinPath(easel, "dist/easel.hpp"), joinPath(root, "src/easel.hpp")))
             ++c.files;
         // 构建脚本用模板那份标准的（它带 [easel:bundled]，认得包里自带的 easel/）
         std::string tpl = joinPath(easel, "template");
@@ -270,13 +270,13 @@ ExportReport exportProject(const ExportOptions& opt) {
 
     // ---- 4. 说明书 ----
     // 新建工程时库文件被搬进了 .easel/（D-29），裸 g++ 那条命令要带 -I
-    bool hiddenCore = existsU8(joinPath(root, ".easel/easel_core.h"));
+    bool hiddenCore = existsU8(joinPath(root, ".easel/easel.hpp"));
     writeTextU8(joinPath(root, "BUILD.txt"), howToBuild(name, opt.withEasel, hiddenCore));
 
     // ---- 5. 自检：一条条对着「完整」的定义核 ----
     check(&r, existsU8(joinPath(root, "src/solver.cpp")), "有 src/solver.cpp（算法本体）");
-    check(&r, hiddenCore || existsU8(joinPath(root, "src/easel_core.h")),
-          std::string("有 easel_core.h（") + (hiddenCore ? ".easel/" : "src/") +
+    check(&r, hiddenCore || existsU8(joinPath(root, "src/easel.hpp")),
+          std::string("有 easel.hpp（") + (hiddenCore ? ".easel/" : "src/") +
               "）—— 单头零依赖，一条 g++ 就能编算法");
     check(&r, existsU8(topCMake), "有 CMakeLists.txt");
     check(&r, existsU8(joinPath(root, "tests")), "有 tests/", true);

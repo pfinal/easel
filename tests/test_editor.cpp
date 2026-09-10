@@ -194,7 +194,7 @@ TEST_CASE("新建工程：作品名进 CMakeLists / app.cpp，构建脚本进 .e
     CHECK_FALSE(existsU8(joinPath(r.dir, "src/solver.cpp")));   // 空工程没有算法文件
     CHECK_FALSE(existsU8(joinPath(r.dir, "README.md")));        // 不再生成 README（D-36）
     for (const char* junk : {"CMakeLists.txt", "CMakePresets.json", "跑.sh", "跑.bat", "run.bat",
-                             "docs", "build", "tests", "src/easel_core.h", "data", "assets"})
+                             "docs", "build", "tests", "src/easel.hpp", "data", "assets"})
         CHECK_MESSAGE(!existsU8(joinPath(r.dir, junk)), junk);
 
     // ls 根目录（不算隐藏项）只有 src
@@ -209,7 +209,7 @@ TEST_CASE("新建工程：作品名进 CMakeLists / app.cpp，构建脚本进 .e
 
     // 构建脚本全在 .easel/ 里，但单头库不拷贝进去了（D-36：直接指到 <easelDir>/dist）
     CHECK(existsU8(joinPath(r.dir, ".easel/CMakeLists.txt")));
-    CHECK_FALSE(existsU8(joinPath(r.dir, ".easel/easel_core.h")));
+    CHECK_FALSE(existsU8(joinPath(r.dir, ".easel/easel.hpp")));
 
     std::string cmake, appcpp, settings;
     REQUIRE(readTextU8(joinPath(r.dir, ".easel/CMakeLists.txt"), &cmake));
@@ -259,7 +259,7 @@ TEST_CASE("新建工程：作品名进 CMakeLists / app.cpp，构建脚本进 .e
     REQUIRE_MESSAGE(fr.ok, fr.error);
     CHECK(existsU8(joinPath(fr.dir, "data/example.json")));
     CHECK(existsU8(joinPath(fr.dir, "src/solver.cpp")));
-    CHECK_FALSE(existsU8(joinPath(fr.dir, ".easel/easel_core.h")));
+    CHECK_FALSE(existsU8(joinPath(fr.dir, ".easel/easel.hpp")));
     CHECK_FALSE(existsU8(joinPath(fr.dir, "CMakeLists.txt")));
 
     // parentDir 指向一个还不存在的多级目录：自动建出来（CI 里 --new /tmp/blank 这种）
