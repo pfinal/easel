@@ -11,6 +11,18 @@
 #      target_link_libraries(myapp PRIVATE easel::easel)
 # ============================================================================
 cmake_minimum_required(VERSION 3.20)
+
+# ---- macOS 部署目标：必须在 project() 之前设，晚了就不生效 -----------------
+# 不设的话 CMake 按构建机当前系统版本写进二进制的 LC_BUILD_VERSION（minos）；
+# GitHub Actions 的 macos-latest runner 系统版本会随时间上调，某次悄悄从
+# minos 15.0 变成更高之后，用户在更老的 macOS（比如 15.7）上双击 Easel.app
+# 直接被系统拒绝，报「这个版本不能与此版本的 macOS 配合使用」——Info.plist 里的
+# LSMinimumSystemVersion 不管用，系统看的是 Mach-O 里的这个字段。钉死成 11.0
+# （Big Sur，也是 Apple Silicon 的起点）之后，minos 就不再随构建机漂移。
+if(APPLE AND NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET)
+  set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "最低支持的 macOS（Big Sur，Apple Silicon 的起点）")
+endif()
+
 project(easel VERSION 0.1.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)

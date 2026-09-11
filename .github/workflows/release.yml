@@ -94,16 +94,14 @@ jobs:
 
   # ============================================================================
   #  macOS：scripts/make_bundle_mac.py 自己配置 + 编译 + install + 打包 + ad-hoc 签名。
-  #  GitHub 的 macos-latest 是 Apple Silicon（arm64），产出的包只能在 arm64 上跑；
-  #  make_bundle_mac.py 已经把 platform.machine() 拼进了产物名，所以这里不用额外处理。
-  #
-  #  本来想再加一个 macos-13（Intel/x86_64）矩阵项出 x86_64 的包，但 macos-13 已经从
-  #  actions/runner-images 下线了（images/macos/macos-13-Readme.md 404，README 里的
-  #  受支持镜像列表里也没有它，最老的 x64 镜像是已标记 deprecated 的 macos-14），所以
-  #  这里只出 arm64 一份，x86_64 缺失这件事写进下面 release job 生成的 Release 说明里。
+  #  make_bundle_mac.py 传 -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" 编通用二进制，
+  #  一个包同时支持 Apple Silicon 和 Intel（vendor/ 全是源码编的依赖，clang 原生
+  #  支持一次编两个架构），所以不需要 macos-13/macos-14 那种额外的 Intel runner
+  #  矩阵项——GitHub 的 macos-latest（Apple Silicon）这一台机器上编出来的包两种
+  #  Mac 都能跑。
   # ============================================================================
   macos:
-    name: macOS 发布包（Apple Silicon / arm64）
+    name: macOS 发布包（通用二进制）
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -120,7 +118,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: macos-zip
-          path: build/pack/Easel-*-macos-*.zip
+          path: build/pack/Easel-*-macos.zip
           if-no-files-found: error
           retention-days: 14
 
@@ -166,11 +164,10 @@ jobs:
           ## 下载
 
           - **Windows x64**：\`Easel-${{ steps.ver.outputs.version }}-windows-x64.zip\`
-          - **macOS（Apple Silicon / arm64）**：\`Easel-${{ steps.ver.outputs.version }}-macos-arm64.zip\`
+          - **macOS（通用二进制）**：\`Easel-${{ steps.ver.outputs.version }}-macos.zip\`
 
-          > 这份 macOS 包只在 arm64（Apple Silicon）机器上编译和签名，只能在 arm64 的 Mac 上跑。
-          > GitHub 官方的 \`macos-13\`（Intel）Runner 镜像已经下线，目前没有官方产出的 x86_64
-          > 版本；Intel Mac 用户需要按 README「从源码构建」自己编一份。
+          > macOS 包是通用二进制（universal binary），同时支持 Intel 和 Apple Silicon，
+          > 不用区分架构、不用挑版本。
 
           ## 用法
 
@@ -182,7 +179,7 @@ jobs:
           ## 系统要求
 
           - Windows 7 SP1 x64 及以上（Win10/11 同样适用；Win7 尚未实测）
-          - macOS 11 及以上，Apple Silicon（arm64）
+          - macOS 11 及以上，Intel 和 Apple Silicon 通用
 
           ## 平台差异
 

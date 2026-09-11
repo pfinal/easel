@@ -99,10 +99,7 @@ Windows/MinGW 的预编译包（`.a` 静态库 + `easel.exe`），再用
 
 同理，`scripts/make_bundle_mac.py` 产的 `.app` 只能在 macOS 上编——脚本开头
 就检查了 `sys.platform != "darwin"` 直接退出。CI 里 `macos` job 跑在
-`macos-latest`（Apple Silicon / arm64）上，产出的包只能在 arm64 的 Mac 上跑；
-GitHub 官方的 `macos-13`（Intel）runner 镜像已经下线（`images/macos/
-macos-13-Readme.md` 已经 404，README 里当前支持的镜像列表里也没有它了），所
-以目前没有 CI 产的 x86_64 macOS 包——Intel Mac 用户得自己跑
-`scripts/make_bundle_mac.py` 从源码编一份。以后如果 GitHub 出了新的 x64
-macOS 镜像，可以在 `release.yml` 的 `macos` job 里加一个 `strategy.matrix`
-项指过去。
+`macos-latest`（Apple Silicon）上，但打包脚本传了
+`-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"` 编通用二进制（universal binary），
+所以这一台机器编出来的 `Easel.app` 同时支持 Apple Silicon 和 Intel，不需要
+额外的 Intel runner 矩阵项。
