@@ -71,6 +71,10 @@ Release package: download the zip, double-click `Easel.app`. Requires the Xcode 
 
 There is a no-install toolbox containing gcc, cmake, ninja, and Easel, assembled by `scripts/make_toolbox.py`. After extracting it, double-click `easel.bat`. The toolbox's official build ships together with the first release. Requires Windows 7 SP1 x64 or newer (Win10/11 also work); not yet tested on Windows 7. See [`docs/windows-toolbox.md`](docs/windows-toolbox.md) for details, including the OpenGL/DX11 fallback.
 
+### Linux
+
+Release package: download the tar.gz (x86_64), extract it, and run `./bin/easel`. It ships with prebuilt libraries so a new project links in seconds instead of minutes, but -- unlike the Windows toolbox -- it doesn't bundle a compiler: you'll need `g++` and `cmake` (`ninja-build` is optional) plus a handful of graphics libraries already common on desktop Linux. See the `README.txt` inside the package for the exact list.
+
 ## Workbench
 
 New Project / Build & Run / Stop / Build exe / Export source. A project runs as a separate process; clicking an error line jumps to the corresponding location in the source. A blank project has only one file -- `src/app.cpp` -- the build scripts live in `.easel/` and the single-header library isn't copied at all, it's pointed straight at Easel's own `dist/`. The "Skeleton" dropdown can also start from the algorithm skeleton (data file, frame-by-frame replay, convergence chart) or from any bundled example. Project names must be ASCII (compilers don't handle non-ASCII paths well).

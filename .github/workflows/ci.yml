@@ -296,3 +296,95 @@ jobs:
             build/mingw/examples/sort/easel_example_sort.exe
             build/mingw/examples/creative/easel_example_creative.exe
           retention-days: 14
+
+  # ==========================================================================
+  #  Linux 发布包（scripts/make_tarball_linux.py 产的 tar.gz）唯一的验证手段：
+  #  打包 → 解到一个跟构建目录毫无关系的路径（/tmp/easel-smoke）→ 后面全部步骤
+  #  只碰解压出来的东西，一次都不碰仓库里的文件——这是为了证明包本身自洽，不是
+  #  靠仓库里残留的构建产物凑巧跑通。
+  #  跑在 ubuntu-22.04（不是 ubuntu-latest）：release.yml 的 linux job 也定在
+  #  22.04（链到旧版 glibc，兼容面更广），冒烟测试要在同一个基线上跑才有意义。
+  # ==========================================================================
+  linux-tarball-smoke:
+    name: Linux 发布包冒烟测试（tar.gz 解压即用）
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 装 Linux 上的图形依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-dev libx11-dev libxrandr-dev \
+            libxinerama-dev libxcursor-dev libxi-dev libxkbcommon-dev libgtk-3-dev ninja-build
+
+      - name: 依赖源码抓进 vendor/
+        run: python3 scripts/vendor.py
+
+      - name: 配置 + 构建 easel_workbench（Release）
+        run: |
+          cmake -S . -B build/linux-release -DCMAKE_BUILD_TYPE=Release \
+                -DEASEL_BUILD_EXAMPLES=OFF -DEASEL_BUILD_TESTS=OFF
+          cmake --build build/linux-release --target easel_workbench --parallel
+
+      - name: cmake --install（装出预编译包）
+        run: cmake --install build/linux-release --prefix build/linux-prebuilt
+
+      - name: 打 tar.gz（scripts/make_tarball_linux.py 只组装，不碰编译器）
+        run: |
+          python3 scripts/make_tarball_linux.py \
+            --exe build/linux-release/easel --prebuilt-dir build/linux-prebuilt
+
+      - name: 解压到跟构建目录无关的路径，后面只碰这里
+        run: |
+          rm -rf /tmp/easel-smoke
+          mkdir -p /tmp/easel-smoke
+          tar xzf build/pack/Easel-*-linux-x64.tar.gz -C /tmp/easel-smoke
+          ls /tmp/easel-smoke
+          echo "SMOKE_DIR=$(echo /tmp/easel-smoke/Easel-*-linux-x64)" >> "$GITHUB_ENV"
+
+      - name: --doctor：Easel 源码要指向解压目录内部，不是仓库路径
+        # cd 进解压目录再跑——学生也是这么用的（解压完先进那个目录），顺便让 doctor
+        # 报告里的「工作目录」也变成 $SMOKE_DIR，不用再从整份输出里排除这一行。
+        run: |
+          cd "$SMOKE_DIR"
+          ./bin/easel --doctor > /tmp/doctor.txt 2>&1
+          cat /tmp/doctor.txt
+          grep "Easel 源码" /tmp/doctor.txt
+          if ! grep -q "Easel 源码.*$SMOKE_DIR" /tmp/doctor.txt; then
+            echo "断言失败：「Easel 源码」没有指到解压目录 $SMOKE_DIR 内部"; exit 1
+          fi
+          # 只核对「Easel 源码」「预编译」这两行，不核对整份输出——「工作目录」那行
+          # 报的是进程 cwd（这里就是 $SMOKE_DIR 自己，含糊地 grep 整份输出反而会在
+          # cwd 恰好等于仓库路径时把这两件不相关的事情搞混）。
+          if grep -E "Easel 源码|预编译" /tmp/doctor.txt | grep -q "$GITHUB_WORKSPACE"; then
+            echo "断言失败：「Easel 源码」/「预编译」指到了仓库路径 $GITHUB_WORKSPACE，包不自洽"; exit 1
+          fi
+
+      - name: 无头新建工程（--new）
+        run: |
+          rm -rf /tmp/np
+          "$SMOKE_DIR/bin/easel" --new /tmp/np --name Demo --full
+          test -f /tmp/np/Demo/src/app.cpp
+          test -f /tmp/np/Demo/src/solver.cpp
+
+      - name: 无头编译（--build）：必须命中预编译包，不是现场源码编
+        run: |
+          "$SMOKE_DIR/bin/easel" --build /tmp/np/Demo > /tmp/build.txt 2>&1
+          cat /tmp/build.txt
+          if ! grep -q "用预编译的 Easel" /tmp/build.txt; then
+            echo "断言失败：没有走预编译——abi 没对上，或者包里 prebuilt/ 布局不对"; exit 1
+          fi
+          if grep -q "用本地的 Easel 源码" /tmp/build.txt; then
+            echo "断言失败：走了源码编（这个 job 就该红）——预编译没命中"; exit 1
+          fi
+          test -f /tmp/np/Demo/.easel/build/bin/app
+
+      - name: 无头导出（--export）：自检里不许有 [×]
+        run: |
+          "$SMOKE_DIR/bin/easel" --export /tmp/np/Demo > /tmp/export.txt 2>&1
+          cat /tmp/export.txt
+          if grep -q '\[×\]' /tmp/export.txt; then
+            echo "断言失败：导出自检里有 [×]"; exit 1
+          fi

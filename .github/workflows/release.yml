@@ -1,6 +1,6 @@
 name: Release
 
-# 打 tag（v*）就自动出两个平台的发布包，挂到一个草稿 Release 上等人工确认。
+# 打 tag（v*）就自动出三个平台的发布包，挂到一个草稿 Release 上等人工确认。
 # workflow_dispatch 留着手动跑：调试这个流水线时不用真的打 tag。
 on:
   push:
@@ -123,12 +123,61 @@ jobs:
           retention-days: 14
 
   # ============================================================================
-  #  两个包都出来之后，建一个草稿 Release 把它们挂上去 —— 草稿，不是正式发布：
-  #  人工确认两个 zip 都能正常解压打开之后，再去 GitHub 网页上点 Publish。
+  #  Linux：ubuntu-22.04（不是 ubuntu-latest/24.04）—— 发布包链的是这台机器上的
+  #  glibc，选新版镶到包里的话，装了旧版 glibc 的机器（比如老一点的机房电脑）
+  #  会直接跑不起来；22.04 的 glibc 明显更旧，兼容面更广。
+  #  跟 Windows job 一个套路：cmake 自己配置 + 编 + install 装预编译包，
+  #  scripts/make_tarball_linux.py 只管组装（不碰编译器），--exe / --prebuilt-dir
+  #  分开传进去。
+  # ============================================================================
+  linux:
+    name: Linux 发布包（tar.gz）
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # scripts/abi.py 的 git_commit() 和 VERSION.json 要读 git 信息
+
+      - name: 装 Linux 上的图形依赖（跟 ci.yml 的 build job 一字不差）
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-dev libx11-dev libxrandr-dev \
+            libxinerama-dev libxcursor-dev libxi-dev libxkbcommon-dev libgtk-3-dev ninja-build
+
+      - name: 依赖源码抓进 vendor/（打包脚本要求它先就位）
+        run: python3 scripts/vendor.py
+
+      - name: 配置（Release，不编 examples/tests，省时间）
+        run: |
+          cmake -S . -B build/linux-release -DCMAKE_BUILD_TYPE=Release \
+                -DEASEL_BUILD_EXAMPLES=OFF -DEASEL_BUILD_TESTS=OFF
+
+      - name: 构建 easel_workbench
+        run: cmake --build build/linux-release --target easel_workbench --parallel
+
+      - name: cmake --install（装出 Linux 预编译包）
+        run: cmake --install build/linux-release --prefix build/linux-prebuilt
+
+      - name: 打 tar.gz（脚本只组装，不碰编译器）
+        run: |
+          python3 scripts/make_tarball_linux.py \
+            --exe build/linux-release/easel --prebuilt-dir build/linux-prebuilt
+
+      - name: 上传 linux-tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-tarball
+          path: build/pack/Easel-*-linux-x64.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  # ============================================================================
+  #  三个包都出来之后，建一个草稿 Release 把它们挂上去 —— 草稿，不是正式发布：
+  #  人工确认三份产物都能正常解压打开之后，再去 GitHub 网页上点 Publish。
   # ============================================================================
   release:
     name: 创建 GitHub Release（草稿）
-    needs: [windows, macos]
+    needs: [windows, macos, linux]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -143,10 +192,16 @@ jobs:
           name: macos-zip
           path: artifacts/macos
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-tarball
+          path: artifacts/linux
+
       - name: 核对产物
         run: |
           echo "== windows =="; find artifacts/windows -type f
           echo "== macos =="; find artifacts/macos -type f
+          echo "== linux =="; find artifacts/linux -type f
 
       - name: 算 tag / 版本号
         id: ver
@@ -165,6 +220,7 @@ jobs:
 
           - **Windows x64**：\`Easel-${{ steps.ver.outputs.version }}-windows-x64.zip\`
           - **macOS（通用二进制）**：\`Easel-${{ steps.ver.outputs.version }}-macos.zip\`
+          - **Linux x64**：\`Easel-${{ steps.ver.outputs.version }}-linux-x64.tar.gz\`
 
           > macOS 包是通用二进制（universal binary），同时支持 Intel 和 Apple Silicon，
           > 不用区分架构、不用挑版本。
@@ -175,20 +231,25 @@ jobs:
             不用装任何东西、不用联网）。
           - **macOS**：解压 zip，把 \`Easel.app\` 拖进「应用程序」；第一次打开要右键选「打开」，
             绕开「无法验证开发者」的提示。
+          - **Linux**：解压 tar.gz，跑 \`./bin/easel\`；编译工程前先看一眼 \`README.txt\` 里
+            要装的图形库（运行时库和构建用的 -dev 包分开列了）。
 
           ## 系统要求
 
           - Windows 7 SP1 x64 及以上（Win10/11 同样适用；Win7 尚未实测）
           - macOS 11 及以上，Intel 和 Apple Silicon 通用
+          - Linux x86_64，glibc 不早于 Ubuntu 22.04 那份（包本身就是在 ubuntu-22.04 上编的，
+            没有额外下限要求；更新的发行版通常也兼容）
 
           ## 平台差异
 
-          Windows 包里自带编译器（gcc/g++）、CMake、Ninja，解压即用；macOS 包不内置这些——
-          使用前要先装好 Xcode 命令行工具（\`xcode-select --install\`）和 CMake
-          （\`brew install cmake\`，或去 https://cmake.org/download/ 下官方 dmg）。
+          Windows 包里自带编译器（gcc/g++）、CMake、Ninja，解压即用；macOS / Linux 包都不
+          内置这些——macOS 使用前要先装好 Xcode 命令行工具（\`xcode-select --install\`）和
+          CMake（\`brew install cmake\`，或去 https://cmake.org/download/ 下官方 dmg）；
+          Linux 需要 \`g++\`、\`cmake\`，以及运行/编译各自要装的图形库（见包里 \`README.txt\`）。
 
           ---
-          这是 CI 自动生成的草稿 Release：两个 zip 都下载下来实际解压打开确认没问题，
+          这是 CI 自动生成的草稿 Release：三份产物都下载下来实际解压打开确认没问题，
           再点 Publish release。
           EOF
           cat RELEASE_NOTES.md
@@ -203,3 +264,4 @@ jobs:
           files: |
             artifacts/windows/**/*.zip
             artifacts/macos/**/*.zip
+            artifacts/linux/**/*.tar.gz

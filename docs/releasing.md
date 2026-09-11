@@ -26,13 +26,14 @@
    ```
 
    `.github/workflows/release.yml` 会在 tag 推上去之后自动跑：并行编 Windows
-   绿色工具箱 zip（`windows` job）和 macOS `.app` zip（`macos` job），两个都
-   成功之后 `release` job 把它们挂到一个**草稿** Release 上（`draft: true`，
-   不会直接公开）。
+   绿色工具箱 zip（`windows` job）、macOS `.app` zip（`macos` job）、Linux
+   tar.gz（`linux` job），三个都成功之后 `release` job 把它们挂到一个**草稿**
+   Release 上（`draft: true`，不会直接公开）。
 
-5. 人工检查：去 Actions 页面等三个 job 跑完，去 Releases 页面找到那个新草稿：
-   - 两个 zip 都下载下来，本机实际解压、打开，确认能跑起来（Windows 双击
-     `easel.exe`，macOS 把 `Easel.app` 拖进「应用程序」双击）。
+5. 人工检查：去 Actions 页面等四个 job 跑完，去 Releases 页面找到那个新草稿：
+   - 三份产物都下载下来，本机实际解压、打开，确认能跑起来（Windows 双击
+     `easel.exe`，macOS 把 `Easel.app` 拖进「应用程序」双击，Linux 解压后跑
+     `./bin/easel`）。
    - 草稿的 body 是自动生成的，核对一下版本号、文件名对不对。
    - 没问题了，在 Releases 页面点这个草稿 → **Publish release**。
 
@@ -54,9 +55,9 @@
 ## 版本号要改哪几处
 
 Easel 的版本号存了两份，都要跟着改，两边不一致的话 `scripts/make_toolbox.py`
-/ `scripts/make_bundle_mac.py` 产出的包名和 `easel-prebuilt.json` 里的
-`version` 字段用的是 `include/easel/core.h` 那份，跟 `CMakeLists.txt` 那份不
-会自动同步：
+/ `scripts/make_bundle_mac.py` / `scripts/make_tarball_linux.py` 产出的包名和
+`easel-prebuilt.json` 里的 `version` 字段用的是 `include/easel/core.h` 那份，
+跟 `CMakeLists.txt` 那份不会自动同步：
 
 1. `CMakeLists.txt` 顶部的 `project(easel VERSION 0.1.1 LANGUAGES CXX)`。
 2. `include/easel/core.h` 里的四个宏：
@@ -103,3 +104,25 @@ Windows/MinGW 的预编译包（`.a` 静态库 + `easel.exe`），再用
 `-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"` 编通用二进制（universal binary），
 所以这一台机器编出来的 `Easel.app` 同时支持 Apple Silicon 和 Intel，不需要
 额外的 Intel runner 矩阵项。
+
+## 限制：Linux 包必须在 `ubuntu-22.04` 上编，不是 `ubuntu-latest`
+
+`release.yml` 的 `linux` job 固定 `runs-on: ubuntu-22.04`（`ci.yml` 里天天跑
+的 `build` job 用的是 `ubuntu-latest`，那个不用动——它只验证「代码在最新
+Ubuntu 上编得过」，不产发布物）。发布包链接的是打包那台机器上的 glibc；
+`ubuntu-latest` 目前是 24.04，链出来的二进制在装着更旧 glibc 的机器上会直接
+启动不了（`GLIBC_2.3x not found`）。`ubuntu-22.04` 的 glibc 明显更旧，兼容
+面更广，所以固定用它，将来 GitHub 把 `ubuntu-22.04` 这个标签下线之前不用改。
+
+跟 `scripts/make_toolbox.py`（Windows）一样，`scripts/make_tarball_linux.py`
+自己不碰编译器——它只管组装：拷可执行文件、拷源码树、拷 `cmake --install` 装
+出来的预编译包、收集许可证、写 `README.txt`、打 `tar.gz`。真正的配置/编译/
+安装是 `linux` job 自己用 `cmake` 做的（跟 Windows job 的写法一模一样），组装
+脚本用 `--exe` / `--prebuilt-dir` 两个参数认这两份产物。这样一来，脚本里跟
+平台无关的那部分（许可证收集、README 文案、tar.gz 打包）在任何装了 Python 3
+的机器上都能单独验证——不用每次改一行 README 文案就重新在 Linux 上编一遍
+Easel；但完整链路（编译 + 装预编译 + 组装 + 解压跑起来）仍然要在 Linux 上
+（真机、Linux 容器、或 `ubuntu-22.04` CI runner）跑一遍才算数，`ci.yml` 的
+`linux-tarball-smoke` job 就是干这个的——参见脚本顶部的说明和该 job 里的断言
+（解压到跟构建目录无关的路径、`--doctor` 里的 Easel 源码指向解压目录、
+`--build` 命中预编译而不是源码编、`--export` 自检没有 `[×]`）。

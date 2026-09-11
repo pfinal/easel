@@ -70,6 +70,10 @@ cmake --preset default && cmake --build --preset default
 
 有一个免安装工具箱，包含 gcc、cmake、ninja 和 Easel，由 `scripts/make_toolbox.py` 打包生成。解压后双击 `easel.bat`（Workbench 启动器）。该工具箱的官方构建会随第一个发布版本一起提供。系统要求 Windows 7 SP1 x64 及以上（Win10/11 同样适用）；Win7 尚未实测。详见 [`docs/windows-toolbox.md`](docs/windows-toolbox.md)（含 OpenGL/DX11 后端退路说明）。
 
+### Linux
+
+发布包：下载 tar.gz（x86_64），解压后跑 `./bin/easel`。包里带了预编译库，新建工程几秒钟就能链上，不用等几分钟现编；但跟 Windows 工具箱不同，它不自带编译器——需要自己装好 `g++` 和 `cmake`（`ninja-build` 可选），以及几个图形相关的库（桌面版 Linux 上通常已经有）。具体清单见包里的 `README.txt`。
+
 ## Workbench
 
 New Project / Build & Run / Stop / Build exe / Export source。项目以独立进程运行；点击错误行会跳转到源码中对应的位置。空白工程只有一个文件 —— `src/app.cpp` —— 构建脚本放在 `.easel/` 里，单头库不拷贝，直接指到 Easel 自己的 `dist/`。「骨架」下拉还可以选算法骨架（数据文件、逐帧回放、收敛曲线）或者任意一个自带示例。作品名只能用英文（编译器对中文路径支持不好）。
