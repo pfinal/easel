@@ -38,6 +38,10 @@
 
 namespace easel {
 
+// Key 定义在 app.h（数值等于 ImGuiKey，那边有说明）；这里只前向声明，避免
+// canvas.h <-> app.h 相互 #include（app.h 本来就要 #include canvas.h）。
+enum class Key;
+
 enum class Align { Left, Center, Right };
 
 // 一张图片。用 easel::loadTexture("data/map.png") 得到。
@@ -68,6 +72,7 @@ public:
     double  zoom() const;                   // 一个世界单位 = 多少像素
     Vec2    mouse() const;                  // 鼠标的世界坐标（不受变换栈影响）
     bool    hovered() const;                // 鼠标是否在画布上
+    bool    keyDown(Key k) const;           // 这一帧某键是否按住，转调 App::keyDown
     Camera& camera() const;
 
     // ---------------- 样式（状态式，像 Processing）----------------

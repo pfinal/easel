@@ -1581,8 +1581,8 @@ int main(int argc, char** argv) {
 
     app.onFrame([](double) { pump(); });
     app.onWindow([&app](const Rect& r) { draw(r, app.theme(), (float)app.dpiScale()); });
-    app.onKey([](int key) {
-        if (key == ImGuiKey_F5) compileAndRun();
+    app.onKey([](Key key) {
+        if (key == Key::F5) compileAndRun();
     });
     app.status("Easel");
     return app.run();

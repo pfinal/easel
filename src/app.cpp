@@ -56,6 +56,77 @@ using internal::iv4;
 using internal::shared;
 
 // ============================================================================
+//  Key <-> ImGuiKey 数值对齐检查
+//  app.h 里 Key 的每一项都是手写的字面数字（那份公开头文件不能 #include <imgui.h>），
+//  这里逐一 static_assert 保证它们和 ImGui 当前的 ImGuiKey 真的对得上。ImGui 升级版本
+//  要是改了某个键的数值，这里编译期就炸，不会等到运行时才发现按键全错位了。
+// ============================================================================
+static_assert((int)Key::A == ImGuiKey_A, "Key::A != ImGuiKey_A");
+static_assert((int)Key::B == ImGuiKey_B, "Key::B != ImGuiKey_B");
+static_assert((int)Key::C == ImGuiKey_C, "Key::C != ImGuiKey_C");
+static_assert((int)Key::D == ImGuiKey_D, "Key::D != ImGuiKey_D");
+static_assert((int)Key::E == ImGuiKey_E, "Key::E != ImGuiKey_E");
+static_assert((int)Key::F == ImGuiKey_F, "Key::F != ImGuiKey_F");
+static_assert((int)Key::G == ImGuiKey_G, "Key::G != ImGuiKey_G");
+static_assert((int)Key::H == ImGuiKey_H, "Key::H != ImGuiKey_H");
+static_assert((int)Key::I == ImGuiKey_I, "Key::I != ImGuiKey_I");
+static_assert((int)Key::J == ImGuiKey_J, "Key::J != ImGuiKey_J");
+static_assert((int)Key::K == ImGuiKey_K, "Key::K != ImGuiKey_K");
+static_assert((int)Key::L == ImGuiKey_L, "Key::L != ImGuiKey_L");
+static_assert((int)Key::M == ImGuiKey_M, "Key::M != ImGuiKey_M");
+static_assert((int)Key::N == ImGuiKey_N, "Key::N != ImGuiKey_N");
+static_assert((int)Key::O == ImGuiKey_O, "Key::O != ImGuiKey_O");
+static_assert((int)Key::P == ImGuiKey_P, "Key::P != ImGuiKey_P");
+static_assert((int)Key::Q == ImGuiKey_Q, "Key::Q != ImGuiKey_Q");
+static_assert((int)Key::R == ImGuiKey_R, "Key::R != ImGuiKey_R");
+static_assert((int)Key::S == ImGuiKey_S, "Key::S != ImGuiKey_S");
+static_assert((int)Key::T == ImGuiKey_T, "Key::T != ImGuiKey_T");
+static_assert((int)Key::U == ImGuiKey_U, "Key::U != ImGuiKey_U");
+static_assert((int)Key::V == ImGuiKey_V, "Key::V != ImGuiKey_V");
+static_assert((int)Key::W == ImGuiKey_W, "Key::W != ImGuiKey_W");
+static_assert((int)Key::X == ImGuiKey_X, "Key::X != ImGuiKey_X");
+static_assert((int)Key::Y == ImGuiKey_Y, "Key::Y != ImGuiKey_Y");
+static_assert((int)Key::Z == ImGuiKey_Z, "Key::Z != ImGuiKey_Z");
+static_assert((int)Key::Num0 == ImGuiKey_0, "Key::Num0 != ImGuiKey_0");
+static_assert((int)Key::Num1 == ImGuiKey_1, "Key::Num1 != ImGuiKey_1");
+static_assert((int)Key::Num2 == ImGuiKey_2, "Key::Num2 != ImGuiKey_2");
+static_assert((int)Key::Num3 == ImGuiKey_3, "Key::Num3 != ImGuiKey_3");
+static_assert((int)Key::Num4 == ImGuiKey_4, "Key::Num4 != ImGuiKey_4");
+static_assert((int)Key::Num5 == ImGuiKey_5, "Key::Num5 != ImGuiKey_5");
+static_assert((int)Key::Num6 == ImGuiKey_6, "Key::Num6 != ImGuiKey_6");
+static_assert((int)Key::Num7 == ImGuiKey_7, "Key::Num7 != ImGuiKey_7");
+static_assert((int)Key::Num8 == ImGuiKey_8, "Key::Num8 != ImGuiKey_8");
+static_assert((int)Key::Num9 == ImGuiKey_9, "Key::Num9 != ImGuiKey_9");
+static_assert((int)Key::Left == ImGuiKey_LeftArrow, "Key::Left != ImGuiKey_LeftArrow");
+static_assert((int)Key::Right == ImGuiKey_RightArrow, "Key::Right != ImGuiKey_RightArrow");
+static_assert((int)Key::Up == ImGuiKey_UpArrow, "Key::Up != ImGuiKey_UpArrow");
+static_assert((int)Key::Down == ImGuiKey_DownArrow, "Key::Down != ImGuiKey_DownArrow");
+static_assert((int)Key::Tab == ImGuiKey_Tab, "Key::Tab != ImGuiKey_Tab");
+static_assert((int)Key::Space == ImGuiKey_Space, "Key::Space != ImGuiKey_Space");
+static_assert((int)Key::Enter == ImGuiKey_Enter, "Key::Enter != ImGuiKey_Enter");
+static_assert((int)Key::Escape == ImGuiKey_Escape, "Key::Escape != ImGuiKey_Escape");
+static_assert((int)Key::Backspace == ImGuiKey_Backspace, "Key::Backspace != ImGuiKey_Backspace");
+static_assert((int)Key::Delete == ImGuiKey_Delete, "Key::Delete != ImGuiKey_Delete");
+static_assert((int)Key::LeftShift == ImGuiKey_LeftShift, "Key::LeftShift != ImGuiKey_LeftShift");
+static_assert((int)Key::RightShift == ImGuiKey_RightShift, "Key::RightShift != ImGuiKey_RightShift");
+static_assert((int)Key::LeftCtrl == ImGuiKey_LeftCtrl, "Key::LeftCtrl != ImGuiKey_LeftCtrl");
+static_assert((int)Key::RightCtrl == ImGuiKey_RightCtrl, "Key::RightCtrl != ImGuiKey_RightCtrl");
+static_assert((int)Key::LeftAlt == ImGuiKey_LeftAlt, "Key::LeftAlt != ImGuiKey_LeftAlt");
+static_assert((int)Key::RightAlt == ImGuiKey_RightAlt, "Key::RightAlt != ImGuiKey_RightAlt");
+static_assert((int)Key::F1 == ImGuiKey_F1, "Key::F1 != ImGuiKey_F1");
+static_assert((int)Key::F2 == ImGuiKey_F2, "Key::F2 != ImGuiKey_F2");
+static_assert((int)Key::F3 == ImGuiKey_F3, "Key::F3 != ImGuiKey_F3");
+static_assert((int)Key::F4 == ImGuiKey_F4, "Key::F4 != ImGuiKey_F4");
+static_assert((int)Key::F5 == ImGuiKey_F5, "Key::F5 != ImGuiKey_F5");
+static_assert((int)Key::F6 == ImGuiKey_F6, "Key::F6 != ImGuiKey_F6");
+static_assert((int)Key::F7 == ImGuiKey_F7, "Key::F7 != ImGuiKey_F7");
+static_assert((int)Key::F8 == ImGuiKey_F8, "Key::F8 != ImGuiKey_F8");
+static_assert((int)Key::F9 == ImGuiKey_F9, "Key::F9 != ImGuiKey_F9");
+static_assert((int)Key::F10 == ImGuiKey_F10, "Key::F10 != ImGuiKey_F10");
+static_assert((int)Key::F11 == ImGuiKey_F11, "Key::F11 != ImGuiKey_F11");
+static_assert((int)Key::F12 == ImGuiKey_F12, "Key::F12 != ImGuiKey_F12");
+
+// ============================================================================
 //  Timeline 的播放逻辑（放这里是因为它要和主循环的 dt 对上）
 // ============================================================================
 void TimelineBase::seek(int i) {
@@ -102,7 +173,7 @@ struct App::Impl {
     std::function<void()>            onPanel;
     std::function<void(Vec2, Mouse)> onClick;
     std::function<void(const Drag&)> onDrag;
-    std::function<void(int)>         onKey;
+    std::function<void(Key)>         onKey;
     std::function<void(double)>      onFrame;
     std::function<void()>            onStart;
     std::function<void(const Rect&)> onWindow;
@@ -294,7 +365,7 @@ App& App::onDraw(std::function<void(Canvas&)> fn) { p_->onDraw = std::move(fn); 
 App& App::onPanel(std::function<void()> fn) { p_->onPanel = std::move(fn); return *this; }
 App& App::onClick(std::function<void(Vec2, Mouse)> fn) { p_->onClick = std::move(fn); return *this; }
 App& App::onDrag(std::function<void(const Drag&)> fn) { p_->onDrag = std::move(fn); return *this; }
-App& App::onKey(std::function<void(int)> fn) { p_->onKey = std::move(fn); return *this; }
+App& App::onKey(std::function<void(Key)> fn) { p_->onKey = std::move(fn); return *this; }
 App& App::onFrame(std::function<void(double)> fn) { p_->onFrame = std::move(fn); return *this; }
 App& App::onStart(std::function<void()> fn) { p_->onStart = std::move(fn); return *this; }
 App& App::onWindow(std::function<void(const Rect&)> fn) { p_->onWindow = std::move(fn); return *this; }
@@ -335,6 +406,9 @@ bool        App::wantsSolve() const { return cli::args().has("solve"); }
 Camera&     App::camera() { return p_->cam; }
 Canvas&     App::canvas() { return p_->canvas; }
 double      App::dpiScale() const { return p_->dpi; }
+// Key 的数值就是 ImGuiKey（见 app.h 里 Key 的注释），转换零成本，直接强转丢给
+// ImGui 查询就行。
+bool        App::keyDown(Key k) const { return ImGui::IsKeyDown((ImGuiKey)k); }
 // 帧号和运行时长都直接读 internal::Shared 里那两个字段（frame() 每帧开头更新的就是
 // 它们），不另立一套计数器——这样 F12 调试台里「第 N 帧」、日志行首的 fN、和这里
 // 读到的 frameCount() 永远是同一个数，对着日志排查时不会差一帧。
@@ -998,7 +1072,7 @@ void App::frame() {
         // 一点就重开了。Easel 的鼠标另有一套模型（onClick(Vec2, Mouse) + enum class
         // Mouse），两套不能混着用，所以 onKey 只派发真正的键盘键，到鼠标别名为止。
         for (int k = ImGuiKey_NamedKey_BEGIN; k < ImGuiKey_MouseLeft; ++k)
-            if (ImGui::IsKeyPressed((ImGuiKey)k, false)) d.onKey(k);
+            if (ImGui::IsKeyPressed((ImGuiKey)k, false)) d.onKey((Key)k);
     }
 
     // ---------------- 面板 ----------------

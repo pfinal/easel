@@ -12,6 +12,25 @@ namespace easel {
 
 enum class Mouse { Left, Right, Middle };
 
+// 键盘按键。数值直接等于对应的 ImGuiKey（src/app.cpp 里给这里每一项都写了
+// static_assert，ImGui 哪天改了数值顺序，编译立刻炸，不会悄悄错位）。这样定有两个
+// 好处：Key <-> ImGuiKey 的转换零成本（直接 (ImGuiKey)k）；这里没列出的冷门键
+// （小键盘、F13 往上……）依然能强转成 Key 塞进来用，不会因为「没在枚举里」就用不了。
+// 只收学生真的会用的键；鼠标键不在这儿，那是 Mouse 的地盘。
+enum class Key {
+    // 字母
+    A = 546, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z,
+    // 数字（标识符不能以数字开头，前面加 Num）
+    Num0 = 536, Num1, Num2, Num3, Num4, Num5, Num6, Num7, Num8, Num9,
+    // 方向键
+    Left = 513, Right, Up, Down,
+    // 常用控制键
+    Tab = 512, Space = 524, Enter = 525, Escape = 526, Backspace = 523, Delete = 522,
+    LeftShift = 528, RightShift = 532, LeftCtrl = 527, RightCtrl = 531, LeftAlt = 529, RightAlt = 533,
+    // 功能键
+    F1 = 572, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12,
+};
+
 struct Drag {
     Vec2  start;        // 世界坐标：按下的地方
     Vec2  current;      // 世界坐标：现在
@@ -68,7 +87,7 @@ public:
     App& onPanel(std::function<void()> fn);         // 右侧面板
     App& onClick(std::function<void(Vec2, Mouse)> fn);
     App& onDrag(std::function<void(const Drag&)> fn);
-    App& onKey(std::function<void(int)> fn);        // 参数是 ImGuiKey（如 ImGuiKey_F），按下瞬间触发一次
+    App& onKey(std::function<void(Key)> fn);         // 按下瞬间触发一次（持续按住用 keyDown）
     App& onFrame(std::function<void(double)> fn);   // 每帧最先调用，参数是 dt（秒）
     // 窗口和显卡都准备好之后调一次。加载图片（loadTexture）必须放在这里，
     // 不能放在 run() 之前 —— 那时候还没有显卡上下文。
@@ -76,6 +95,12 @@ public:
     // 画布那块区域整个交给你，自己用 ImGui 画（工具类程序用得上：没有画布，只有界面）。
     // 参数是那块区域的屏幕矩形。和 onDraw 可以同时用，onWindow 画在上面。
     App& onWindow(std::function<void(const Rect&)> fn);
+
+    // ---------------- 输入查询 ----------------
+    // 这一帧某键是否按住（方向键控制角色移动这类「持续按着」的输入用它；
+    // 「按下的瞬间」用上面的 onKey，两者不重复，别都试一遍）。Canvas 上也有一份同名的，
+    // onDraw 里拿着 Canvas& 就不用再去捕获 app。
+    bool keyDown(Key k) const;
 
     // ---------------- 启动页（D-21：别让评委看到空白画布）----------------
     App& welcome(const std::string& title, const std::string& desc, std::function<void()> body);

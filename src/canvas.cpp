@@ -63,6 +63,12 @@ Vec2 Canvas::mouse() const {
     return toWorld({m.x, m.y});
 }
 
+// 转调 App::keyDown，不复制判断逻辑——onDraw 里拿着 Canvas& 就不用再去捕获 app。
+bool Canvas::keyDown(Key k) const {
+    App* a = App::instance();
+    return a && a->keyDown(k);
+}
+
 // ---------------------------------------------------------------- 样式
 Canvas& Canvas::fill(const Color& c) { st_.fillColor = c; st_.hasFill = true; return *this; }
 Canvas& Canvas::noFill() { st_.hasFill = false; return *this; }
