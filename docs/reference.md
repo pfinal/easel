@@ -93,7 +93,7 @@ app.onDraw([&](Canvas& c) {
 | `onPanel(fn())` | 每帧，右侧面板区域 | 无 |
 | `onClick(fn(Vec2, Mouse))` | 点击画布 | 世界坐标、按下的键 |
 | `onDrag(fn(const Drag&))` | 拖拽中的每一帧 | 见 [`Drag`](#ondrag) |
-| `onKey(fn(int))` | 某键刚按下的那一帧 | `ImGuiKey` |
+| `onKey(fn(Key))` | 某键刚按下的那一帧 | [`Key`](#key) |
 | `onWindow(fn(const Rect&))` | 每帧，把画布区域交给自定义 ImGui 绘制 | 该区域的屏幕矩形 |
 
 `onStart` 是**唯一**能调用 [`loadTexture`](#loadtexture) 的地方（`run()` 之前显卡上下文不存在），只调一次。
@@ -473,14 +473,42 @@ App& onDrag(std::function<void(const Drag&)>);   // 拖拽中每帧调用
 `velocity` 是最近几帧的平滑速度，"松手甩出去"（惯性抛出、缩放/滚动的惯性）直接读
 `ended` 帧的 `velocity` 就行，不用像 `delta` 那样自己去接上一帧的值。
 
-<a id="onkey"></a>
+<a id="key"></a>
 ```cpp
-App& onKey(std::function<void(int)>);   // 参数为 ImGuiKey；仅在键刚按下的那一帧触发一次
+enum class Key {
+    A, B, ..., Z,                                   // 字母
+    Num0, Num1, ..., Num9,                           // 数字（不能用 0/1/2 当标识符开头）
+    Left, Right, Up, Down,                           // 方向键
+    Tab, Space, Enter, Escape, Backspace, Delete,    // 常用控制键
+    LeftShift, RightShift, LeftCtrl, RightCtrl, LeftAlt, RightAlt,
+    F1, F2, ..., F12,                                // 功能键
+};
 ```
 
-持续按住需在 `onFrame` 中自行判断：`ImGui::IsKeyDown(ImGuiKey_Space)`。
-方向键的名字是 `ImGuiKey_LeftArrow` / `RightArrow` / `UpArrow` / `DownArrow`
-（没有 `ImGuiKey_Up` 这种写法）。
+`Key` 的数值就是对应的 `ImGuiKey`（编译期 `static_assert` 保证对齐），所以这里没
+列出的冷门键（小键盘、F13 往上……）依然可以强转塞进来用：`(Key)ImGuiKey_KeypadEnter`。
+鼠标键不在 `Key` 里，那是 [`Mouse`](#onclick) 的地盘。
+
+<a id="onkey"></a>
+```cpp
+App& onKey(std::function<void(Key)>);   // 仅在键刚按下的那一帧触发一次
+bool keyDown(Key k) const;              // 这一帧是否按住；Canvas 上也有一份同名的，转调这个
+```
+
+两者不重复：**按下瞬间**（比如「空格开火」）用 `onKey`；**持续按住**（比如「按住方向键
+移动」）用 `keyDown`，一般在 `onFrame`/`onDraw` 里每帧判断：
+
+```cpp
+app.onFrame([&](double dt) {
+    if (app.keyDown(Key::Left))  x -= speed * dt;
+    if (app.keyDown(Key::Right)) x += speed * dt;
+});
+// 或者在 onDraw 里，拿着 Canvas& 直接用，不用捕获 app：
+app.onDraw([&](Canvas& c) {
+    if (c.keyDown(Key::Up))   y -= 2;   // 每帧挪一点，简单场景不需要单独算 dt
+    if (c.keyDown(Key::Down)) y += 2;
+});
+```
 
 <a id="click-drag-契约"></a>
 ### `onClick` 与 `onDrag` 的关系
@@ -518,6 +546,17 @@ bool button(const char* label, bool wide = false);
 ```
 
 `v` 为唯一真相源，双向绑定（拖动改 `*v`，代码改 `*v` 滑块位置同步）。返回值 `true` 表示本帧发生变化。
+
+<a id="ui-select"></a>
+```cpp
+bool select(const char* label, int* v, std::initializer_list<const char*> items);
+bool select(const char* label, int* v, const std::vector<std::string>& items);
+```
+下拉框（N 选一）。`*v` 是选中项的下标，返回值同 `slider`：`true` 表示这一帧选项变了。
+```cpp
+if (ui::select("算法", &S.algo, {"冒泡排序", "选择排序"})) sortAll();
+```
+选项数量固定用 `initializer_list` 这版最短；选项是运行时算出来的（文件名列表等）用 `vector<string>` 这版。
 
 <a id="ui-stat-chart"></a>
 ```cpp

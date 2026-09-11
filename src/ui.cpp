@@ -53,6 +53,27 @@ bool sliderCommit(const char* label, int* v, int lo, int hi) {
     return ImGui::IsItemDeactivatedAfterEdit();
 }
 
+// 下拉框：内部还是 ImGui::Combo，只是把 items 从「const char* 数组 + 个数」那套
+// 换成学生写起来更短的 initializer_list / vector<string>，外观上跟 slider 对齐
+// （label 单独一行，控件占满宽度）。
+bool select(const char* label, int* v, std::initializer_list<const char*> items) {
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    ImGui::TextUnformatted(label);
+    std::string id = std::string("##") + label;
+    std::vector<const char*> arr(items.begin(), items.end());
+    return ImGui::Combo(id.c_str(), v, arr.data(), (int)arr.size());
+}
+
+bool select(const char* label, int* v, const std::vector<std::string>& items) {
+    std::vector<const char*> arr;
+    arr.reserve(items.size());
+    for (const std::string& s : items) arr.push_back(s.c_str());
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    ImGui::TextUnformatted(label);
+    std::string id = std::string("##") + label;
+    return ImGui::Combo(id.c_str(), v, arr.data(), (int)arr.size());
+}
+
 bool toggle(const char* label, bool* v) { return ImGui::Checkbox(label, v); }
 
 bool button(const char* label, bool wide) {

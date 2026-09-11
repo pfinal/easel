@@ -70,6 +70,11 @@ int main(int argc, char** argv) {
     app.onPanel([&]{ /* 每帧重画右侧面板 */ });
     app.onClick([&](easel::Vec2 w, easel::Mouse b){ /* w 是世界坐标 */ });
     app.onDrag ([&](const easel::Drag& d){ /* d.start d.current d.delta d.velocity */ });
+    app.onKey  ([&](easel::Key k){ if (k == easel::Key::Space) fire(); }); // 按下瞬间，只触发一次
+    app.onFrame([&](double dt){
+        if (app.keyDown(easel::Key::Left))  x -= speed * dt;  // 持续按住；Canvas 上也有同名的 c.keyDown(k)
+        if (app.keyDown(easel::Key::Right)) x += speed * dt;
+    });
 
     app.transport(tl);                       // 底部播放条
     app.welcome("标题", "一句话", []{ ... }); // 启动页
@@ -152,7 +157,7 @@ c.alpha(0.5)   c.textSize(14)  c.dashed(6, 4)  c.solid()   c.push() / c.pop()
 
 c.line(a, b);                 c.polyline(点数组, 是否闭合);
 c.circle(中心, 世界半径);      c.dot(中心, 像素半径);      // dot 不随缩放变大
-c.rect(Rect);                 c.text(位置, "字", Align::Center);
+c.rect(Rect, 圆角像素);        c.text(位置, "字", Align::Center);   // 圆角像素不填=直角；有变换（push/rotate/scale）时圆角会被忽略
 c.textWidth("字")             // 当前 textSize() 下这段字多宽（像素）——排版、右对齐/居中要用
 c.image(tex, Rect);           // Texture tex = easel::loadTexture("assets/map.png");
 
@@ -241,6 +246,7 @@ if (ui::section("参数")) { ... }
 ui::slider("温度", &T0, 1.0, 5000.0);   ui::slider("点数", &n, 5, 50);
 ui::sliderCommit("温度", &T0, 1.0, 5000.0);   // 只在松手那一帧返回 true；参数改动要重算时用它，别用 slider
 ui::toggle("显示名称", &show);           ui::button("开始优化", true /*占满宽度*/)
+ui::select("算法", &algo, {"冒泡排序", "选择排序"});   // N 选一，*v 是选中项下标，返回值同 slider
 ui::stat("总里程", 4.72, "公里", 2);     ui::chart("收敛", ys, "总长度");
 ui::title("小标题")  ui::help("灰色说明")  ui::separator()  ui::spacing()  ui::sameLine()
 ```
@@ -264,7 +270,6 @@ t.fontPath = "assets/fonts/我的字体.ttf";   // 不设就自动找系统中�
 | 没有 | 绕过去的办法 |
 |---|---|
 | 混合模式（加法混合 / 正片叠底之类，只有普通的透明叠加） | 发光/叠亮效果用半透明多画几层：`c.alpha(0.3)` 反复画同一个图形 |
-| 圆角矩形（`c.rect()` 只有直角） | 自己用 `beginShape`/`vertex`/`endShape` 拼出圆角，或者直接调 `ImGui::GetWindowDrawList()->AddRectFilled(..., rounding)` |
 | 渐变填充（`fill()` 只认纯色） | 贴一张渐变图当纹理用 `c.image()`，或者自己分段画多个纯色图形模拟 |
 | 裁剪 / 遮罩（clip region） | 没有画布级裁剪；ImGui 的 `PushClipRect` 能顶一部分场合 |
 | 视频播放（只有图片和精灵表） | 序列帧图片当动画放，或者用 `Graphics` 离屏画布自己合成 |

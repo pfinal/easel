@@ -173,8 +173,7 @@ int main(int argc, char** argv) {
 
     app.onPanel([&app] {
         if (ui::section("小节")) {
-            const char* names[] = {"万花筒", "拖尾", "噪声地形", "精灵动画 + 声音", "流场"};
-            ImGui::Combo("切换", &S.part, names, 5);
+            ui::select("切换", &S.part, {"万花筒", "拖尾", "噪声地形", "精灵动画 + 声音", "流场"});
             if (S.part == 1 && ui::button("清空尾巴", true)) S.ink.clear();
             if (S.part == 2 && ui::button("换一片地形", true)) noiseSeed(++S.seedVal);
             if (S.part == 3) ui::help("点一下画布放个音效，柱子是频谱，精灵会随响度放大。");

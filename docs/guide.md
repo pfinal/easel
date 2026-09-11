@@ -61,7 +61,7 @@ Easel 把 Scratch、Processing、openFrameworks 三种写法接到同一个库�
 | `random() / randomSeed()` | [`rng().d()`](reference.md#rng) / [`seed()`](reference.md#rng) |
 | `mousePressed() / mouseX, mouseY` | [`App::onClick`](reference.md#onclick) / [`c.mouse()`](reference.md#坐标) |
 | `keyPressed()`（按下的瞬间，只触发一次） | [`App::onKey`](reference.md#onkey) |
-| 持续按住一个键（比如方向键控制角色移动） | `ImGui::IsKeyDown(ImGuiKey_LeftArrow)`——在 `onFrame` 里每帧自己判断，`onKey` 不会重复触发，拿它做「按住移动」会撞墙 |
+| 持续按住一个键（比如方向键控制角色移动） | [`app.keyDown(Key::Left)`](reference.md#onkey) / `c.keyDown(Key::Left)`——在 `onFrame`/`onDraw` 里每帧自己判断，`onKey` 不会重复触发，拿它做「按住移动」会撞墙 |
 | `PVector` | [`Vec2`](reference.md#vec2) |
 | 五个内置颜色模式 | [`Color::hex/rgb/hsv/gray`](reference.md#color) |
 | `saveFrame()` | `app.screenshot(path)` |
@@ -82,7 +82,7 @@ Easel 把 Scratch、Processing、openFrameworks 三种写法接到同一个库�
 | `ofMap / ofLerp / ofDist / ofClamp` | [`remap() / lerp() / dist() / clamp()`](reference.md#remap-lerp-clamp) |
 | `ofRandom / ofSeedRandom` | [`rng().d() / seed()`](reference.md#rng) |
 | `ofSoundPlayer` | [`audio::Sound`](reference.md#audio-sound) |
-| `ofxGui`（`ofxFloatSlider` 等） | [`ui::slider/toggle/button`](reference.md#面板控件-ui) |
+| `ofxGui`（`ofxFloatSlider` / `ofxComboBox` 等） | [`ui::slider/toggle/button/select`](reference.md#面板控件-ui) |
 | `ofVec2f` / `glm::vec2` | [`Vec2`](reference.md#vec2) |
 | `ofRectangle` | [`Rect`](reference.md#rect) |
 

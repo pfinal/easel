@@ -66,8 +66,7 @@ int main(int argc, char** argv) {
     app.onPanel([&] {
         if (ui::section("数据")) {
             if (ui::slider("元素个数", &S.n, 8, 120)) { makeData(); sortAll(); }
-            const char* algos[] = {"冒泡排序", "选择排序"};
-            if (ImGui::Combo("算法", &S.algo, algos, 2)) sortAll();   // Easel 没有的直接调 ImGui
+            if (ui::select("算法", &S.algo, {"冒泡排序", "选择排序"})) sortAll();
             if (ui::button("换一批数据", true)) { seed(current_seed() + 1); makeData(); sortAll(); }
         }
         const Frame& f = S.tl.current();

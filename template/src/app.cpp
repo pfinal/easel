@@ -107,8 +107,7 @@ int main(int argc, char** argv) {
             ui::toggle("对比：现状 vs 优化后", &U.compare);
             // 主题就是数据，五套预设一行切换（D-22）
             static int themeIndex = 0;
-            const char* names[] = {"Forest 绿", "Ocean 蓝", "Ember 橙", "Paper 米白", "Slate 灰蓝"};
-            if (ImGui::Combo("配色", &themeIndex, names, 5))
+            if (ui::select("配色", &themeIndex, {"Forest 绿", "Ocean 蓝", "Ember 橙", "Paper 米白", "Slate 灰蓝"}))
                 app.theme(Theme::presets()[themeIndex]);
         }
         if (ui::section("收敛曲线")) {
