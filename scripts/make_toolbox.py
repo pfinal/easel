@@ -159,7 +159,7 @@ echo       cd 我的作品
 echo       g++ -std=c++17 -DEASEL_STANDALONE src\\solver.cpp -o solver.exe
 echo       solver.exe data\\example.json
 echo.
-echo   做界面：双击工程里的 跑.bat，或者
+echo   做界面：双击工程里的 run.bat，或者
 echo       cmake --preset mingw -DEASEL_DIR=..\\easel
 echo       cmake --build --preset mingw
 echo       build\\mingw\\bin\\app.exe --open data\\example.json --solve

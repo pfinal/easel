@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# 编译 + 运行（Mac / Linux）。Windows 上用同目录的 跑.bat。
+# 编译 + 运行（Mac / Linux）。Windows 上用同目录的 run.bat。
 # 多给的参数会转交给 app，例如：
-#     ./跑.sh --seed 7          换个随机种子
-#     ./跑.sh --debug           启动就打开 F12 调试台
+#     ./run.sh --seed 7          换个随机种子
+#     ./run.sh --debug           启动就打开 F12 调试台
 set -e
 cd "$(dirname "$0")"
 

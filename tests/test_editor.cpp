@@ -104,31 +104,45 @@ TEST_CASE("找编译器：找到了就该是个真文件，没找到就得留下
     }
 }
 
-TEST_CASE("looksLikeProject：只有 src/ 目录不算数，甚至只有 app.cpp 也不算数") {
+TEST_CASE("looksLikeProject：只有 src/ 目录不算数，极简工程和完整骨架都算数，easel 仓库自己不算数") {
     // 回归测试：resolvePaths() 曾经只看 <候选目录>/src 存不存在，导致从 easel 仓库
     // 根目录（自己的 src/ 下也有个 app.cpp，库内部实现，凑巧同名）起进程时，
     // projectDir 被误判成 easel 仓库自己，「导出工程」把整个 easel 仓库当学生工程导出，
     // 自检里「有 src/solver.cpp」变成 [×]。
+    //
+    // 后来判定改成了「app.cpp 和 solver.cpp 都要在」，又引出新的回归：极简工程
+    // （template-hello，只有 src/app.cpp 一个文件）被一起挡在外面，误判成「不是工程」。
+    // 现在换成「有 src/app.cpp，且不是 easel 仓库自己（没有 include/easel/easel.h）」。
     std::string tmp = joinPath(fs::cwd(), "test_lookslikeproject_tmp");
     removeTreeU8(tmp);
 
-    // 长得像 easel 仓库自己：src/ 存在，但是空的——没有 app.cpp，也没有 solver.cpp
-    std::string easelLike = joinPath(tmp, "easel-like");
-    makeDirsU8(joinPath(easelLike, "src"));
-    CHECK_FALSE(looksLikeProject(easelLike));
+    // 长得像 easel 仓库自己：src/ 存在，但是空的——没有 app.cpp
+    std::string emptySrc = joinPath(tmp, "empty-src");
+    makeDirsU8(joinPath(emptySrc, "src"));
+    CHECK_FALSE(looksLikeProject(emptySrc));
 
-    // 更贴近真实场景：src/ 下有 app.cpp，但没有 solver.cpp（这正是 easel 仓库自己的样子）
-    std::string appOnly = joinPath(tmp, "app-only");
-    makeDirsU8(joinPath(appOnly, "src"));
-    writeTextU8(joinPath(appOnly, "src/app.cpp"), "// 不是学生工程");
-    CHECK_FALSE(looksLikeProject(appOnly));
+    // 极简工程（template-hello 建出来的样子）：只有 src/app.cpp 一个文件，没有
+    // solver.cpp，也没有 include/easel/——这条现在必须算「是工程」。
+    std::string minimal = joinPath(tmp, "minimal");
+    makeDirsU8(joinPath(minimal, "src"));
+    writeTextU8(joinPath(minimal, "src/app.cpp"), "// 极简工程的 app.cpp");
+    CHECK(looksLikeProject(minimal));
 
-    // 真正的学生工程：src/app.cpp 和 src/solver.cpp 都在
+    // 完整骨架：src/app.cpp 和 src/solver.cpp 都在
     std::string proj = joinPath(tmp, "proj");
     makeDirsU8(joinPath(proj, "src"));
     writeTextU8(joinPath(proj, "src/app.cpp"), "// 学生的 app.cpp");
     writeTextU8(joinPath(proj, "src/solver.cpp"), "// 学生的算法");
     CHECK(looksLikeProject(proj));
+
+    // easel 仓库自己：src/app.cpp 存在（库内部实现 App 类的那个，凑巧同名），但整棵
+    // include/easel/ 源码树也在——这是学生工程不可能有的反向特征，必须被排除掉。
+    std::string easelRepo = joinPath(tmp, "easel-repo");
+    makeDirsU8(joinPath(easelRepo, "src"));
+    writeTextU8(joinPath(easelRepo, "src/app.cpp"), "// easel 库内部实现 App 类");
+    makeDirsU8(joinPath(easelRepo, "include/easel"));
+    writeTextU8(joinPath(easelRepo, "include/easel/easel.h"), "// easel 公开头");
+    CHECK_FALSE(looksLikeProject(easelRepo));
 
     removeTreeU8(tmp);
 }
@@ -194,7 +208,7 @@ TEST_CASE("新建工程：作品名进 CMakeLists / app.cpp，构建脚本进 .e
     CHECK_FALSE(existsU8(joinPath(r.dir, "src/solver.cpp")));   // 空工程没有算法文件
     CHECK_FALSE(existsU8(joinPath(r.dir, "README.md")));        // 不再生成 README（D-36）
     for (const char* junk : {"CMakeLists.txt", "CMakePresets.json", "跑.sh", "跑.bat", "run.bat",
-                             "docs", "build", "tests", "src/easel.hpp", "data", "assets"})
+                             "run.sh", "docs", "build", "tests", "src/easel.hpp", "data", "assets"})
         CHECK_MESSAGE(!existsU8(joinPath(r.dir, junk)), junk);
 
     // ls 根目录（不算隐藏项）只有 src

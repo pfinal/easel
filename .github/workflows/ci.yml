@@ -150,7 +150,7 @@ jobs:
           cd /tmp/np/Demo
           ls -a
           # 脚手架一律不许出现在根目录
-          for junk in CMakeLists.txt CMakePresets.json 跑.sh 跑.bat run.bat docs build tests \
+          for junk in CMakeLists.txt CMakePresets.json 跑.sh 跑.bat run.bat run.sh docs build tests \
                       src/easel.hpp README.md; do
             if [ -e "$junk" ]; then echo "根目录里不该有 $junk"; exit 1; fi
           done

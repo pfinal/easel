@@ -28,7 +28,10 @@ for _s in (sys.stdout, sys.stderr):
 # 源码包里要装什么。子目录会整个拷进去（build 之类在 SKIP 里排掉）。
 SOURCE_ITEMS = ["src", "tests", "data", "assets", "debug",
                 "CMakeLists.txt", "CMakePresets.json", "README.md",
-                ".vscode", ".github", "跑.bat", "跑.sh", "run.bat"]
+                ".vscode", ".github", "run.bat", "run.sh",
+                # 跑.bat / 跑.sh：模板早就改成英文名了（run.bat / run.sh），这两个只是给
+                # 在改名之前就已经建好的老工程留个后路，万一它们根目录下还留着这两个文件。
+                "跑.bat", "跑.sh"]
 SKIP = shutil.ignore_patterns("build", "dist", ".git", "__pycache__", "*.pyc",
                               ".DS_Store", ".gitkeep", "*.o", "*.obj", "*.exe",
                               "a.out", "solver", "solver.exe", "imgui.ini")

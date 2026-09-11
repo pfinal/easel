@@ -64,14 +64,17 @@ if(NOT TARGET doctest::doctest)
   FetchContent_MakeAvailable(doctest)
 endif()
 
-# ---- 1. 命令行：算法开发的主战场 -------------------------------------------
-add_executable(solver src/solver.cpp)
-target_compile_definitions(solver PRIVATE EASEL_STANDALONE)
-target_include_directories(solver PRIVATE src)
-if(WIN32)
-  # cli::parse() 用 CommandLineToArgvW（shellapi.h）把命令行转成 UTF-8；solver 不链 easel::easel，
-  # 裸编 easel.hpp，所以这里要单独链一次。
-  target_link_libraries(solver PRIVATE shell32)
+# ---- 1. 命令行：算法开发的主战场（有 src/solver.cpp 才建；「导出工程」出来的极简
+#    工程没有这个文件，不加这层判断 cmake configure 会直接报错）-----------------
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/src/solver.cpp)
+  add_executable(solver src/solver.cpp)
+  target_compile_definitions(solver PRIVATE EASEL_STANDALONE)
+  target_include_directories(solver PRIVATE src)
+  if(WIN32)
+    # cli::parse() 用 CommandLineToArgvW（shellapi.h）把命令行转成 UTF-8；solver 不链 easel::easel，
+    # 裸编 easel.hpp，所以这里要单独链一次。
+    target_link_libraries(solver PRIVATE shell32)
+  endif()
 endif()
 
 # ---- 2. 测试（有 tests/test_solver.cpp 才建；新工程默认不带，D-30）----------

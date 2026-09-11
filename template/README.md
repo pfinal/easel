@@ -141,8 +141,8 @@ debug/                调试用例。这就是你的 bug 日志，别删
 
 ## 懒得敲命令
 
-- Windows：双击 `跑.bat`（先双击过工具箱里的 `start.bat`）
-- Mac / Linux：`./跑.sh`
+- Windows：双击 `run.bat`（先双击过工具箱里的 `start.bat`）
+- Mac / Linux：`./run.sh`
 
 两个脚本都是「没配置就配置，然后编译，然后带示例数据启动 App」。
 

@@ -91,14 +91,18 @@ std::string firstExisting(const std::vector<std::string>& cands) {
 // looksLikeProject 要给 tests/test_editor.cpp 直接调，不能待在匿名命名空间里
 // （声明在 internal.h）。
 //
-// 注意：判定用的是 app.cpp **和** solver.cpp 都在，不是「或」——Easel 仓库自己的
-// src/ 底下就有一个 app.cpp（库内部实现 App 类的那个，凑巧同名），只查 app.cpp
-// 或只查「两者之一」都会把 easel 仓库自己误判成工程目录。solver.cpp 才是唯一只
-// 在学生工程里出现的文件，但单独查它又太窄（万一以后有模板没有 solver.cpp），
-// 所以两个都要，这样才能真正把 easel 仓库自己的 src/ 排除掉。
+// 光查 src/app.cpp 存在不够严——Easel 仓库自己的 src/ 底下也有一个 app.cpp（库内部
+// 实现 App 类的那个，凑巧同名），会把仓库自己误判成工程目录。以前用「app.cpp 和
+// solver.cpp 都要在」来排除，但极简工程（template-hello，一个文件，没有
+// solver.cpp）也会被这条一起挡在外面，误判成「不是工程」。
+// 换一个只有 Easel 仓库自己才有、学生工程不可能有的反向特征：整棵
+// include/easel/ 源码树（比如 include/easel/easel.h）。学生工程无论是导出包还是
+// 开发中的 .easel/ 折叠布局，都只有摊平的单头库或散装的几个头文件，不会带上完整
+// 的 include/easel/ 目录。
 bool looksLikeProject(const std::string& dir) {
     if (dir.empty()) return false;
-    return existsU8(joinPath(dir, "src/app.cpp")) && existsU8(joinPath(dir, "src/solver.cpp"));
+    if (!existsU8(joinPath(dir, "src/app.cpp"))) return false;
+    return !existsU8(joinPath(dir, "include/easel/easel.h"));
 }
 
 namespace {
@@ -133,9 +137,8 @@ void resolvePaths(Ed& e) {
     // 「导出源码」（--export）和 F9 编辑栏认的就是这两个值。
     // 光看候选目录底下有没有 src/ 不够严——比如从 easel 仓库根目录起进程时，仓库自己
     // 的 src/ 也存在，会把 projectDir 错判成 easel 本身。所以每个候选都要过
-    // looksLikeProject()：目录底下得同时有 src/app.cpp 和 src/solver.cpp 才算数
-    // （easel 仓库的 src/ 有 app.cpp 但没有 solver.cpp，缺一不可）。顺序不变，仍是
-    // cwd 优先。
+    // looksLikeProject()：目录底下得有 src/app.cpp，而且不能是 easel 仓库自己
+    // （靠有没有 include/easel/easel.h 分辨）。顺序不变，仍是 cwd 优先。
     std::string cwd = fs::cwd();
     e.paths.projectDir.clear();
     e.pathDiag.push_back("---- projectDir 候选（顺序：cwd -> 编译期常量 -> exe 上一级）----");
@@ -146,8 +149,8 @@ void resolvePaths(Ed& e) {
         }
         bool ok = looksLikeProject(cand);
         e.pathDiag.push_back(cand + " -> " +
-                             (ok ? "像工程（有 src/app.cpp 和 src/solver.cpp），采用"
-                                 : "不像工程（缺 src/app.cpp 或 src/solver.cpp）"));
+                             (ok ? "像工程（有 src/app.cpp，且不是 easel 仓库自己），采用"
+                                 : "不像工程（缺 src/app.cpp，或者是 easel 仓库自己）"));
         if (ok && e.paths.projectDir.empty()) e.paths.projectDir = cand;
     }
     if (e.paths.projectDir.empty()) e.pathDiag.push_back("都不像，projectDir 留空（不瞎猜）");

@@ -125,7 +125,7 @@ cmake --build --preset mingw          （改完代码敲这一条）
 build\mingw\bin\app.exe --open data\example.json --solve
 ```
 
-嫌麻烦就双击模板里的 `跑.bat`，它把这两条合成一条。
+嫌麻烦就双击模板里的 `run.bat`，它把这两条合成一条。
 
 **这一段本来就不该打断点** —— `onDraw` 里停下来窗口会冻住。该看的是 Easel 的
 **F12 调试台**：日志、追踪折线、状态表、画布诊断、导出用例、环境自检。
@@ -136,7 +136,7 @@ build\mingw\bin\app.exe --open data\example.json --solve
 | 阶段 | 怎么编 | 出问题怎么查 |
 |---|---|---|
 | 算法（9/9–9/21） | 一条 `g++`，或编辑器里按编译键 | 编辑器的断点单步（VS Code 配置 1，小熊猫 F5） |
-| 界面（9/22–10/5） | `cmake --build --preset mingw` 或双击 `跑.bat` | **Easel 的 F12 调试台** |
+| 界面（9/22–10/5） | `cmake --build --preset mingw` 或双击 `run.bat` | **Easel 的 F12 调试台** |
 | 定位到具体某行 | — | 导出用例 → 回命令行 → 在单文件里下断点 |
 
 （「用什么写」这一列没了 —— 三段都是「随便」。）
@@ -150,13 +150,7 @@ build\mingw\bin\app.exe --open data\example.json --solve
 zip **已经组出来了**（`build/pack/Easel-0.1.1-windows-x64.zip`，151 MB），内容也核对过：
 g++ / gdb / cmake / ninja / Easel / 模板 / 依赖源码，17139 个文件都在。
 
-但**一次都没在 Windows 上跑过**（这边还没有 Windows 机器），9/21 检查点 #1 实测。
-已知的风险：
-
-- MinGW 编 nfd（系统文件对话框）——最不确定的一块。真编不过就先把文件对话框停掉，
-  用 `--open` 参数指定文件，功能不受影响
-- `RtlCaptureStackBackTrace`（崩溃调用栈）在 MinGW 头文件里的声明
-- 机器上 `start.bat` 拼出来的 PATH 对不对（三个目录：`w64devkit\bin`、`cmake\bin`、`ninja`）
-- 中文文件名（模板工程里的 `跑.bat`）在 Windows 自带解压里会不会乱码 —— 工具箱自己的
-  入口脚本（`start.bat` / `easel.bat` / `export-prebuilt.bat`）现在都是纯 ASCII 文件名，
-  不受影响（D-36）
+CI 每次提交都会把工具箱重新组一遍，实机也跑过了：解压、`start.bat`、新建工程、
+编译、运行都正常。当初担心的三处 —— MinGW 编 nfd（系统文件对话框）、
+`RtlCaptureStackBackTrace`（崩溃调用栈）在 MinGW 头文件里的声明、`start.bat`
+拼出来的 PATH —— 都没出问题。

@@ -81,6 +81,13 @@ void check(ExportReport* r, bool ok, const std::string& text, bool warnOnly = fa
     if (!ok && !warnOnly) r->ok = false;
 }
 
+// 导出目录里有没有 src/solver.cpp，是「完整骨架」和「极简工程」唯一的分界线：
+// 完整骨架三个入口（solver/tests/app）共用一份 solver.cpp；极简工程（template-hello，
+// 现在新建工程的默认布局）只有 src/app.cpp 一个文件，界面和算法都写在里面。
+// 后面自检、试编、BUILD.txt 的说明文字全靠这一个判断，别在各处各自
+// existsU8(...solver.cpp) 一遍。
+bool hasSolverCpp(const std::string& root) { return existsU8(joinPath(root, "src/solver.cpp")); }
+
 // 顶层 CMakeLists 要认得包里自带的 easel/。模板里本来就有这一段（[easel:bundled]），
 // 老模板生成的工程没有，就在这里补上 —— 补不上也不算失败，只是要在自检里说清楚。
 const char* const kBundleMarker = "[easel:bundled]";
@@ -121,25 +128,35 @@ void collectLicenses(const std::string& easelDir, const std::string& dest, int* 
     }
 }
 
-std::string howToBuild(const std::string& name, bool withEasel, bool hiddenCore) {
+std::string howToBuild(const std::string& name, bool withEasel, bool hiddenCore,
+                        bool hasSolver) {
     std::string s;
     s += name + " —— 怎么把它编出来\n";
     s += "================================================\n\n";
     s += "这个目录是自足的：不用装 Easel、不用联网、不用改任何配置文件。\n\n";
-    s += "一、只想跑算法（最快，什么都不用装，只要一个 g++）\n";
-    s += hiddenCore ? "    g++ -std=c++17 -DEASEL_STANDALONE -I.easel src/solver.cpp -o solver\n"
-                    : "    g++ -std=c++17 -DEASEL_STANDALONE src/solver.cpp -o solver\n";
-    s += "    ./solver            （Windows 上是 solver.exe）\n\n";
+    static const char* const kCN[] = {"一", "二", "三", "四"};
+    int                      step  = 0;
+    if (hasSolver) {
+        s += std::string(kCN[step++]) + "、只想跑算法（最快，什么都不用装，只要一个 g++）\n";
+        s += hiddenCore ? "    g++ -std=c++17 -DEASEL_STANDALONE -I.easel src/solver.cpp -o solver\n"
+                        : "    g++ -std=c++17 -DEASEL_STANDALONE src/solver.cpp -o solver\n";
+        s += "    ./solver            （Windows 上是 solver.exe）\n\n";
+    } else {
+        s += "这是个极简工程（只有 src/app.cpp 一个文件），界面和逻辑都写在里面，\n";
+        s += "没有能单独拿 g++ 编的命令行版本，直接看下面「连界面一起编」。\n\n";
+    }
     if (withEasel) {
-        s += "二、连界面一起编（要 cmake + 编译器；界面用 OpenGL 3.2）\n";
+        s += std::string(kCN[step++]) + "、连界面一起编（要 cmake + 编译器；界面用 OpenGL 3.2）\n";
         s += "    cmake -S . -B build -DCMAKE_BUILD_TYPE=Release\n";
         s += "    cmake --build build --config Release --parallel\n";
         s += "    build/bin/app       （Windows 上是 build\\bin\\Release\\app.exe）\n\n";
         s += "    界面库 Easel 的源码在 easel/，它的七个第三方依赖的源码在 easel/vendor/，\n";
         s += "    所以整个过程不联网。cmake 会自己发现它们，不用加参数。\n\n";
-        s += "三、跑测试\n";
-        s += "    cd build && ctest --output-on-failure -C Release\n\n";
-        s += "    （-C Release 是为了支持多配置生成器，单配置生成器会自动忽略这个参数）\n\n";
+        if (hasSolver) {
+            s += std::string(kCN[step++]) + "、跑测试\n";
+            s += "    cd build && ctest --output-on-failure -C Release\n\n";
+            s += "    （-C Release 是为了支持多配置生成器，单配置生成器会自动忽略这个参数）\n\n";
+        }
     }
     s += "编不过的时候：把命令行里的报错原样发出去求助，前三行最有用。\n";
     s += "程序跑起来画面不对：app --doctor，把输出发过来（里面有显卡、后端、字体、DPI）。\n";
@@ -227,10 +244,12 @@ ExportReport exportProject(const ExportOptions& opt) {
             writeTextU8(joinPath(root, "CMakeLists.txt"), cm);
         }
     } else {
+        // 跑.sh / 跑.bat：模板早改成英文名了（run.sh / run.bat），这两个只是给改名之前就
+        // 已经建好的老工程留个后路，万一它们根目录下还留着这两个文件。
         static const char* const kItems[] = {"src",   "tests",   "data",  "assets", "debug", ".easel",
                                              "docs",  ".vscode", ".github", "CMakeLists.txt",
-                                             "CMakePresets.json", "README.md", "跑.sh", "跑.bat",
-                                             "run.bat", ".gitignore", nullptr};
+                                             "CMakePresets.json", "README.md", "run.sh", "run.bat",
+                                             "跑.sh", "跑.bat", ".gitignore", nullptr};
         for (const char* const* p = kItems; *p; ++p) {
             std::string from = joinPath(project, *p);
             if (!existsU8(from)) {
@@ -272,16 +291,28 @@ ExportReport exportProject(const ExportOptions& opt) {
     // ---- 4. 说明书 ----
     // 新建工程时库文件被搬进了 .easel/（D-29），裸 g++ 那条命令要带 -I
     bool hiddenCore = existsU8(joinPath(root, ".easel/easel.hpp"));
-    writeTextU8(joinPath(root, "BUILD.txt"), howToBuild(name, opt.withEasel, hiddenCore));
+    // 极简工程（template-hello）没有 src/solver.cpp——一个文件，界面和算法都在
+    // src/app.cpp 里。完整骨架（template）三个入口共用一份 solver.cpp。两种布局
+    // 后面自检 / 试编 / 说明书都要分别对待，判据只算这一次。
+    bool hasSolver = hasSolverCpp(root);
+    writeTextU8(joinPath(root, "BUILD.txt"), howToBuild(name, opt.withEasel, hiddenCore, hasSolver));
 
     // ---- 5. 自检：一条条对着「完整」的定义核 ----
-    check(&r, existsU8(joinPath(root, "src/solver.cpp")), "有 src/solver.cpp（算法本体）");
+    if (hasSolver) {
+        check(&r, true, "有 src/solver.cpp（算法本体）");
+    } else {
+        check(&r, true, "单文件工程：没有 src/solver.cpp，界面和算法都写在 src/app.cpp 里");
+    }
     check(&r, hiddenCore || existsU8(joinPath(root, "src/easel.hpp")),
           std::string("有 easel.hpp（") + (hiddenCore ? ".easel/" : "src/") +
               "）—— 单头零依赖，一条 g++ 就能编算法");
     check(&r, existsU8(topCMake), "有 CMakeLists.txt");
-    check(&r, existsU8(joinPath(root, "tests")), "有 tests/", true);
-    check(&r, existsU8(joinPath(root, "data")), "有 data/", true);
+    if (hasSolver) {
+        // tests/ 和 data/ 只在完整骨架里才有意义——极简工程压根不带这两个目录，
+        // 提示「没有」纯属噪音（这两条本来就是给完整骨架用的提醒）。
+        check(&r, existsU8(joinPath(root, "tests")), "有 tests/", true);
+        check(&r, existsU8(joinPath(root, "data")), "有 data/", true);
+    }
     if (opt.withEasel) {
         check(&r, existsU8(joinPath(root, "easel/CMakeLists.txt")), "包里带着 Easel 源码");
         check(&r, haveVendor,
@@ -300,7 +331,16 @@ ExportReport exportProject(const ExportOptions& opt) {
     check(&r, !existsU8(joinPath(root, "build")), "包里没有 build/（构建产物不该进交付物）");
 
     // ---- 6. 真的编一次，证明「独立可编译」不是嘴上说说 ----
-    if (opt.verify) {
+    if (opt.verify && !hasSolver) {
+        // 极简工程没有 src/solver.cpp 可编：app.cpp 用的是完整 GUI 库，裸 g++ 一条命令
+        // 本来就编不出来（要 cmake + easel/ 一起编，见下面 CMakeLists 那几条自检）。
+        // 跳过，说明原因——既不装作试编通过，也不当成失败。
+        check(&r, false,
+              "极简工程没有 src/solver.cpp，跳过了「试编一次」这一步——"
+              "app.cpp 用的是完整 GUI 库，裸 g++ 编不出来，是否真的独立可编译要看"
+              "下面 cmake 那几条自检",
+              true);
+    } else if (opt.verify) {
         const Toolchain& tc = toolchain();
         if (tc.cxx.empty()) {
             check(&r, false, "没找到编译器，跳过了「试编一次」这一步（" + tc.note + "）", true);
