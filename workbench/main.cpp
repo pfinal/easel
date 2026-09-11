@@ -1288,13 +1288,25 @@ int main(int argc, char** argv) {
     internal::setVerbose(cli::args().has("verbose"));   // --verbose；GUI 的「详细」勾选也改它
 
     WB& w = wb();
+    // easelDir 解析：复用 --doctor 横幅那条路（editorPaths()，resolvePaths() 已经把
+    // macOS .app bundle 的 .../Contents/Resources/easel 当第一候选探测过了），别在这
+    // 另起一套。之前这里只认「源码构建」（EASEL_SOURCE_DIR）和「Windows 绿色工具箱」
+    // 两种布局，装进 .app 里跑起来两个都不命中，w.easelDir 就一直是空——「新建工程」
+    // 报「找不到工程模板」就是这个（joinPath("", "template") 退化成裸的 "template"）。
+    // 装在 .app 里的程序理应优先用自己 Resources 里那份，EASEL_SOURCE_DIR 和工具箱
+    // 布局垫底；每个候选仍然要「目录里确实有 template」才收，不然一个不带模板的目录
+    // 会被当真。
+    auto hasTemplate = [](const std::string& dir) {
+        return !dir.empty() && existsU8(joinPath(dir, "template"));
+    };
+    if (hasTemplate(editorPaths().easelDir)) w.easelDir = editorPaths().easelDir;
 #if defined(EASEL_SOURCE_DIR)
-    if (existsU8(EASEL_SOURCE_DIR)) w.easelDir = EASEL_SOURCE_DIR;
+    if (w.easelDir.empty() && hasTemplate(EASEL_SOURCE_DIR)) w.easelDir = EASEL_SOURCE_DIR;
 #endif
-    if (w.easelDir.empty() || !existsU8(joinPath(w.easelDir, "template"))) {
+    if (w.easelDir.empty()) {
         // 工具箱布局：<工具箱>/easel/
         const Toolchain& tc = toolchain();
-        if (!tc.kit.empty() && existsU8(joinPath(tc.kit, "easel/template")))
+        if (!tc.kit.empty() && hasTemplate(joinPath(tc.kit, "easel")))
             w.easelDir = joinPath(tc.kit, "easel");
     }
     loadConfig();
