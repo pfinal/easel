@@ -11,6 +11,7 @@
 
 #include "internal.h"
 
+#include <cctype>
 #include <cstdio>
 #include <cstring>
 #include <iostream>
@@ -1324,9 +1325,154 @@ void draw(const Rect& r, const Theme& th, float dpi) {
     ImGui::End();
 }
 
+// ------------------------------------------------------------------ 命令行
+// 工作台的参数表是固定的、由我们自己维护，所以这里既能打出完整用法，也能对认不出的
+// 参数直接报错退出（作品那边不行，见 src/app.cpp 构造函数里的注释）。
+//
+// 这两张表就是「工作台认识哪些参数」的唯一事实来源：改参数时记得同步，否则新参数会
+// 被自己的未知参数检查挡掉。
+// 带值的：后面紧跟一个词是它的值（--new <目录>），也可以写成 --new=<目录>
+const char* const kValueFlags[] = {"new",   "name",       "example", "build",  "run",
+                                   "package", "export",   "out",     "args",   "seed",
+                                   "frames",  "screenshot", "fps",   "warmup", "open", "case"};
+// 不带值的开关
+const char* const kBoolFlags[] = {"help", "version", "json",  "verbose", "tests", "full",
+                                  "doctor", "quiet", "debug", "solve"};
+
+bool inList(const std::string& name, const char* const* list, size_t n) {
+    for (size_t i = 0; i < n; ++i)
+        if (name == list[i]) return true;
+    return false;
+}
+bool knownFlag(const std::string& name) {
+    return inList(name, kValueFlags, sizeof kValueFlags / sizeof *kValueFlags) ||
+           inList(name, kBoolFlags, sizeof kBoolFlags / sizeof *kBoolFlags);
+}
+bool takesValue(const std::string& name) {
+    return inList(name, kValueFlags, sizeof kValueFlags / sizeof *kValueFlags);
+}
+
+std::string usageText(const std::string& prog) {
+    std::string p = prog.empty() ? "easel" : prog;
+    return "用法：" + p + " [工程目录]            打开工作台窗口（不给目录就是上次那个）\n"
+           "      " + p + " <命令> [参数]         不开窗口，做完就退出\n"
+           "\n"
+           "命令（选一个，都不开窗口）：\n"
+           "  --new <放哪的目录>      新建一个工程，配合 --name / --full / --example / --tests\n"
+           "  --build <工程目录>      编译这个工程\n"
+           "  --run <工程目录>        编译并运行，配合 --args \"...\" 给作品传参数\n"
+           "  --package <工程目录>    生成可以直接发给别人的 exe / .app\n"
+           "  --export <工程目录>     导出一份能独立编译的完整源码工程，配合 --out\n"
+           "  --doctor                打印环境自检（Easel 在哪、编译器、cmake、字体…）\n"
+           "  -h, --help              打印这份用法\n"
+           "  -V, --version           打印版本\n"
+           "\n"
+           "参数：\n"
+           "  --name <作品名>         --new 用：作品名 = 目录名，只能用英文字母/数字/_/-\n"
+           "  --full                  --new 用：建算法骨架（读数据、逐帧回放、收敛曲线），\n"
+           "                          不给就是空白工程（一个文件，画个 Hello）\n"
+           "  --example <示例名>      --new 用：从自带示例建（名字写错时会把可用的示例都列出来）\n"
+           "  --tests                 --new 用：多带一个 tests/test_solver.cpp\n"
+           "  --args \"<参数>\"         --run 用：原样传给作品的命令行参数\n"
+           "  --out <目录>            --export 用：导到哪儿（默认 <工程>/dist/<名字>）\n"
+           "  --json                  机器可读输出：stdout 上只有一条 JSON（配合 --build /\n"
+           "                          --run / --package / --export）\n"
+           "  --verbose               多打一截排障细节（PATH、候选路径、工具链探测过程）\n"
+           "\n"
+           "例子：\n"
+           "  " + p + " --new ~/projects --name MySketch          新建一个空白工程\n"
+           "  " + p + " --new ~/projects --name Ex --example sort  从 sort 示例建\n"
+           "  " + p + " --build ~/projects/MySketch --json         编译，拿 JSON 结果\n"
+           "  " + p + " ~/projects/MySketch                        打开工作台，选中这个工程\n"
+           "\n"
+           "工作台本身也是一个 Easel 程序，所以 --frames / --screenshot / --fps / --warmup /\n"
+           "--seed / --quiet 这些框架参数一样认（各自的含义见作品的 app --help）。\n";
+}
+
+// 认不出的参数直接退出，不开窗口：以前任何认不出的参数都是静默地弹出工作台窗口，
+// `easel --help` 敲下去只看到两行日志和一个窗口，人根本不知道自己敲错了。
+// 返回 true 表示「已经处理完毕，main 应当按 *exitCode 退出」。
+bool handleEarlyArgs(int argc, char** argv, int* exitCode) {
+    std::string prog = argc > 0 && argv[0] ? baseName(argv[0]) : "easel";
+    for (int i = 1; i < argc; ++i) {
+        std::string a = argv[i] ? argv[i] : "";
+        if (a == "--help" || a == "-h") {
+            std::fputs(usageText(prog).c_str(), stdout);
+            *exitCode = 0;
+            return true;
+        }
+        if (a == "--version" || a == "-V") {
+            std::printf("%s\n", versionLine().c_str());
+            *exitCode = 0;
+            return true;
+        }
+    }
+    for (int i = 1; i < argc; ++i) {
+        std::string a = argv[i] ? argv[i] : "";
+        if (a.rfind("--", 0) == 0) {
+            std::string name = a.substr(2);
+            size_t      eq = name.find('=');
+            bool        inlineValue = eq != std::string::npos;
+            if (inlineValue) name = name.substr(0, eq);
+            if (knownFlag(name)) {
+                // 带值的参数要把它后面那个词整个跳过，别再拿去做「认不认识」的判断：
+                // 值本身完全可能长得像参数，`easel --run <工程> --args "--frames 30"`
+                // 就是最常见的一例。这里的吞法和 cli::args().str() 取值的方式保持一致
+                // （紧跟的下一个词就是值，不管它长什么样），免得两边对同一条命令行的
+                // 理解不一样。
+                if (takesValue(name) && !inlineValue && i + 1 < argc && argv[i + 1]) ++i;
+                continue;
+            }
+        } else if (a.size() > 1 && a[0] == '-' && !std::isdigit((unsigned char)a[1])) {
+            // 单横杠的短参数：只有 -h / -V 两个，上面已经处理掉了
+        } else {
+            continue;   // 位置参数（工程目录）或者带值参数的值
+        }
+        std::fprintf(stderr, "不认识的参数：%s\n\n", a.c_str());
+        std::fputs(usageText(prog).c_str(), stderr);
+        *exitCode = 2;
+        return true;
+    }
+    return false;
+}
+
+// --example <名字>：示例名不存在时，列出真正可用的那几个。
+// 以前这里不判断，直接把 <easelDir>/examples/<名字> 拼出来交给 createProject()，
+// 于是报错变成「示例目录里没有 main.cpp：/私有路径/.../Resources/easel/examples/nosuchthing」
+// —— 怪错了对象（不是缺 main.cpp，是压根没这个示例）、泄漏了用户不该看见的程序内部
+// 路径、而且不告诉人有哪些可选。
+bool checkExampleName(const std::string& want, const std::vector<std::string>& have,
+                      std::string* err) {
+    for (const std::string& e : have)
+        if (e == want) return true;
+    if (want.empty()) {
+        *err = "--example 后面要跟一个示例名。";
+    } else {
+        *err = "没有名叫 " + want + " 的示例。";
+    }
+    if (have.empty()) {
+        *err += "这份 Easel 里一个示例都没找到（装的可能是不带 examples/ 的精简包）。"
+                "不加 --example 就是空白工程，加 --full 是算法骨架。";
+    } else {
+        *err += "可以用的示例有：";
+        for (size_t i = 0; i < have.size(); ++i) *err += (i ? "、" : "") + have[i];
+        *err += "。比如 --example " + have[0] +
+                "。不加 --example 就是空白工程，加 --full 是算法骨架。";
+    }
+    return false;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
+    // --help / --version / 认不出的参数：在构造 App 之前处理掉。构造 App 会打开日志钩子、
+    // 打一行随机种子，run() 还会真的开窗口 —— `easel --help` 不该看到这些，更不该看到
+    // 一个窗口。这里返回 true 就直接按它给的退出码走。
+    {
+        int code = 0;
+        if (handleEarlyArgs(argc, argv, &code)) return code;
+    }
+
     // --json 模式要求 stdout 上只有那一条 JSON——但 App 的构造函数会顺手调
     // cli::parse()，它打的「本次随机种子」那行 EASEL_LOG 默认也是走 stdout。
     // 这里先手动扫一眼 argv（比 App 构造还早），--json 在就提前开 quiet，
@@ -1389,8 +1535,16 @@ int main(int argc, char** argv) {
         o.name = cli::args().str("name", "MySketch");
         o.withTests = cli::args().has("tests");
         o.fullSkeleton = cli::args().has("full");
-        if (cli::args().has("example"))
-            o.exampleDir = joinPath(joinPath(w.easelDir, "examples"), cli::args().str("example"));
+        if (cli::args().has("example")) {
+            // 先验示例名存不存在（w.exampleNames 就是上面扫 <easelDir>/examples 扫出来的、
+            // 带 main.cpp 的那些子目录），再去拼路径。见 checkExampleName() 的注释。
+            std::string want = cli::args().str("example"), err;
+            if (!checkExampleName(want, w.exampleNames, &err)) {
+                std::printf("建不出来：%s\n", err.c_str());
+                return 1;
+            }
+            o.exampleDir = joinPath(joinPath(w.easelDir, "examples"), want);
+        }
         NewProjectReport rep = createProject(o);
         std::printf("%s\n", rep.ok ? ("建好了：" + rep.dir + "（" + std::to_string(rep.files) +
                                        " 个文件）").c_str()

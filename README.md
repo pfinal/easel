@@ -81,6 +81,22 @@ New Project / Build & Run / Stop / Build exe / Export source. A project runs as 
 
 Every button has a command-line equivalent (`--build` / `--run` / `--package` / `--export`, alongside the headless `--new`); add `--json` to get a machine-readable result instead of plain text, e.g. `easel --build ~/projects/Demo --json`.
 
+### `easel` command cheat sheet
+
+This is the Workbench binary itself (`easel` / `Easel.app` / `easel.bat`), not the app you build with it -- your own compiled program has its own set of flags, documented in [`docs/cheatsheet.md`](docs/cheatsheet.md).
+
+| Action | Command |
+|---|---|
+| Open the Workbench window | `easel` (or `easel <project-dir>` to open it with a project already loaded) |
+| New project | `easel --new <parent-dir> --name <ProjectName> [--full] [--example <name>] [--tests]` |
+| Build | `easel --build <project-dir>` |
+| Build & run | `easel --run <project-dir> [--args "..."]` |
+| Build exe (package for handing out) | `easel --package <project-dir>` |
+| Export self-contained source | `easel --export <project-dir> [--out <dir>]` |
+| Self-check (backend / GPU / fonts / compiler) | `easel --doctor [--verbose]` |
+
+Add `--json` to `--build` / `--run` / `--package` / `--export` for a machine-readable result. On macOS the binary is at `Easel.app/Contents/easel`; on Linux it's `bin/easel` inside the release package -- see the platform notes above. `easel --help` / `easel --version` also work; an argument the Workbench doesn't recognize makes it exit with an error instead of opening a window.
+
 ![Workbench](docs/screenshot-workbench.png)
 
 ## Debug console

@@ -110,10 +110,14 @@ public:
     App&        debugConsoleOpen(bool on);
     bool        debugConsoleOpen() const;
     // 把当前画面存成 PNG（写文档、录视频、CI 里看一眼都用得上）。
-    // 命令行也能用：app --frames 60 --screenshot shot.png
+    // 命令行也能用：app --frames 60 --screenshot shot.png —— 那条路存的一定是最后那一帧
+    // 画好的画面（截图动作卡在「画完、还没交换缓冲区」的那一刻）。
+    // 在 onDraw / onPanel 里手动调它则不然：那时候这一帧还没画完、还没呈现，读到的是
+    // 上一次交换留在后台缓冲里的画面（也就是慢一两帧）。要「所见即所得」就用命令行那条路。
     bool        screenshot(const std::string& path);
 
     // ---------------- 命令行 ----------------
+    //   -h, --help         打印这张表然后退出（不开窗口；构造 App 时就处理掉了）
     //   --open <文件>      启动时打开它（用 openPath() 取）
     //   --solve            打开之后直接算（用 wantsSolve() 判断）
     //   --seed N           换随机种子（不给就永远是同一个结果）
@@ -124,7 +128,8 @@ public:
     //   --edit-run         打开编辑栏并立刻编译运行一次（CI 用；别和工作台自己的 --run 搞混）
     //   --export [目录]    导出一个能独立编译的完整工程，然后退出（不开窗口）
     //   --quiet            EASEL_TRACE / EASEL_LOG 不往终端刷屏
-    //   --frames N         跑 N 帧自动退出（CI / 截图用）
+    //   --frames N         跑 N 帧自动退出（CI / 截图用）。N 必须 ≥ 1；--frames 0 是
+    //                      非法值（会报错退出），「不限制」是 --fps 0 那个参数的意思
     //   --screenshot <png> 退出前存一张截图
     //   --fps N            帧率上限（0 = 不限制），覆盖 frameRate() 设的值
     //   --warmup N         进入正常循环前先空转 N 帧（只调 onFrame(dt)，dt 固定 1/60，
@@ -136,6 +141,14 @@ public:
     // ---------------- 其它 ----------------
     Camera&      camera();
     Canvas&      canvas();
+    // 现在是第几帧（Processing 的 frameCount）。第一帧的回调里就是 1，之后每帧 +1。
+    // --warmup N 预热的那 N 帧也算在里面（预热的就是「帧」）；--frames N 数的是画出来的
+    // 帧，两者在有 --warmup 时会差一个 N。想让动画「每 30 帧换一次颜色」直接拿它取模。
+    long long    frameCount() const;
+    // 从启动到现在多少秒（Processing 的 millis()，只是单位是秒）。同一帧里多次调用
+    // 返回同一个值——帧开头取一次真实时钟，整帧都用它，动画不会因为一帧内取两次时间
+    // 而错位。--warmup 不会推进它（预热是一瞬间跑完的，它记的是真实时钟）。
+    double       elapsed() const;
     double       dpiScale() const;
     const char*  backendName() const;
     std::string  doctor() const;      // 完整自检（core + 后端 + 字体 + DPI）

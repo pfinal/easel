@@ -7,6 +7,7 @@
 
 #include <cctype>
 #include <chrono>
+#include <cstdlib>
 #include <thread>
 
 #if defined(_WIN32)
@@ -161,11 +162,63 @@ struct App::Impl {
 };
 
 // ---------------------------------------------------------------- 构造
+namespace {
+
+// `app --help`：作品的**框架级**参数。学生自己定义的参数（cli::args().num("pad", 40)）
+// 列不出来——框架根本不知道有哪些——所以这份用法只说框架给的这几个，末尾点一句
+// 「作品自己的参数照样能用」。工作台的用法在 workbench/main.cpp，是另一套。
+std::string appUsage(const std::string& prog) {
+    std::string p = prog.empty() ? "app" : prog;
+    return "用法：" + p + " [参数]\n"
+           "\n"
+           "Easel 作品的通用参数（框架提供，每个作品都有）：\n"
+           "  -h, --help          打印这份用法然后退出\n"
+           "  --doctor            打印环境自检（显卡 / 字体 / 编译器）然后退出，不开窗口\n"
+           "  --frames N          画满 N 帧就自动退出（N ≥ 1；CI、截图用）\n"
+           "  --screenshot <png>  退出前把最后一帧存成 PNG（和 --frames 一起用）\n"
+           "  --warmup N          进主循环之前先空转 N 帧：只调 onFrame(dt)，dt 固定 1/60，不渲染\n"
+           "  --fps N             帧率上限，0 = 不限制（覆盖代码里 frameRate() 设的值）\n"
+           "  --seed N            固定随机种子（不给的话每次都不一样，用的种子会打在日志第一行）\n"
+           "  --quiet             EASEL_LOG / EASEL_TRACE 不往终端刷屏\n"
+           "  --debug             启动就把 F12 调试台打开\n"
+           "  --edit              启动就把左边的编辑栏打开（平时按 F9）\n"
+           "  --edit-run          打开编辑栏并立刻编译运行一次（CI 用）\n"
+           "  --export [目录]     导出一个能独立编译的完整工程，然后退出，不开窗口\n"
+           "  --open <文件>       启动时打开这个文件（作品里用 app.openPath() 取）\n"
+           "  --solve             启动就直接算一遍（作品里用 app.wantsSolve() 判断）\n"
+           "  --case <文件>       载入一个调试用例\n"
+           "\n"
+           "例子：\n"
+           "  " + p + " --frames 1 --screenshot shot.png          画一帧、存图、退出\n"
+           "  " + p + " --warmup 600 --frames 1 --screenshot late.png   先空转 600 帧再截图\n"
+           "  " + p + " --doctor                                  环境自检\n"
+           "\n"
+           "作品自己的参数不在这张表里，但照样能用，也不会被拒绝：\n"
+           "  cli::args().num(\"pad\", 40) / .str(\"file\") / .has(\"fast\")\n";
+}
+
+}  // namespace
+
 App::App(int argc, char** argv) : p_(new Impl) {
 #if defined(_WIN32)
     attachParentConsole();
 #endif
     g_instance = this;
+    // --help / -h 在 cli::parse() 之前处理：这样「本次随机种子」那行日志不会混进用法里，
+    // 也不用等到 run()（学生的 main 里可能先 solve() 算半天才 run()）。
+    //
+    // 注意这里**只**认 --help，不做「认不出的参数就报错」那一套：作品会自己定义参数
+    // （cli::args().num("pad", 40)），框架无从知道哪些名字是合法的，一旦拒绝未知参数就
+    // 等于把学生的作品打死。工作台（workbench/main.cpp）的参数表是固定的、由我们自己
+    // 维护，那边才做未知参数检查。
+    for (int i = 1; i < argc && argv; ++i) {
+        std::string a = argv[i] ? argv[i] : "";
+        if (a == "--help" || a == "-h") {
+            std::printf("%s", appUsage(internal::baseName(argc > 0 && argv[0] ? argv[0] : "app")).c_str());
+            std::fflush(stdout);
+            std::exit(0);
+        }
+    }
     if (argc > 0 && argv) cli::parse(argc, argv);
     installCrashHandler();
     // 从这一行起，EASEL_LOG / EASEL_TRACE / dbg 就往调试台里存了 ——
@@ -282,6 +335,11 @@ bool        App::wantsSolve() const { return cli::args().has("solve"); }
 Camera&     App::camera() { return p_->cam; }
 Canvas&     App::canvas() { return p_->canvas; }
 double      App::dpiScale() const { return p_->dpi; }
+// 帧号和运行时长都直接读 internal::Shared 里那两个字段（frame() 每帧开头更新的就是
+// 它们），不另立一套计数器——这样 F12 调试台里「第 N 帧」、日志行首的 fN、和这里
+// 读到的 frameCount() 永远是同一个数，对着日志排查时不会差一帧。
+long long   App::frameCount() const { return shared().frame; }
+double      App::elapsed() const { return shared().time; }
 const char* App::backendName() const { return internal::backend::name(); }
 void        App::quit() { p_->running = false; }
 
@@ -342,11 +400,12 @@ std::string prebuiltRoot(const std::string& easelDir) {
 
 }  // namespace
 
-// 启动横幅：见 internal.h 的注释。GUI 启动、--doctor、每次 build/run/package/export
-// 的日志开头都打它——出问题时先看这几行，不用去猜用的是哪个 Easel、哪份预编译。
-std::string banner(const std::string& projectDir) {
-    std::string o;
-    o += "Easel " EASEL_VERSION;
+// 版本那一行：banner() 的第一行，也是 `easel --version` 打的那一行。单独拎出来是因为
+// EASEL_GIT_SHA / EASEL_ABI / EASEL_BUILT_WITH 这三个宏是 easel 这个 target 私有的
+// （见根 CMakeLists.txt 的 target_compile_definitions），workbench/main.cpp 里看不见，
+// 只能从库里要一份现成的字符串。
+std::string versionLine() {
+    std::string o = "Easel " EASEL_VERSION;
 #if defined(EASEL_GIT_SHA)
     o += std::string(" · 提交 ") + EASEL_GIT_SHA;
 #endif
@@ -356,7 +415,13 @@ std::string banner(const std::string& projectDir) {
 #if defined(EASEL_BUILT_WITH)
     o += std::string(" · ") + EASEL_BUILT_WITH;
 #endif
-    o += "\n";
+    return o;
+}
+
+// 启动横幅：见 internal.h 的注释。GUI 启动、--doctor、每次 build/run/package/export
+// 的日志开头都打它——出问题时先看这几行，不用去猜用的是哪个 Easel、哪份预编译。
+std::string banner(const std::string& projectDir) {
+    std::string o = versionLine() + "\n";
 
     o += bannerLine("程序", exePath());
     const EditorPaths& ep = editorPaths();
@@ -617,6 +682,18 @@ int App::run() {
     Impl& d = *p_;
     bool  doctorOnly = cli::args().has("doctor");
 
+    // --frames 0（以及负数）判非法，不再当成「不限制」。以前 0 走的是「不限制」那条路：
+    // 程序静默地一直跑下去，还顺手把 --screenshot 吞了（永远到不了“最后一帧”，图就永远
+    // 存不出来），而命令行上看不出任何异常。「不限制」是 --fps 0 的意思；同一个 0 在两个
+    // 参数上表示两种意思太容易记混，所以这里直接拒绝，并把两条正路都说清楚。
+    if (cli::args().has("frames") && cli::args().num("frames", 0) <= 0) {
+        EASEL_ERROR("--frames 要一个 ≥ 1 的帧数，给的是 %lld。"
+                    "想截当前这一帧：--frames 1 --screenshot x.png；想一直跑：不加 --frames。"
+                    "（「不限制」是另一个参数：--fps 0 表示不限帧率。）",
+                    cli::args().num("frames", 0));
+        return 2;
+    }
+
     // --export：不开窗口，导完就走。CI 拿它验「导出的工程真的能独立编译」。
     if (cli::args().has("export")) {
         std::string where = cli::args().str("export");
@@ -699,6 +776,11 @@ int App::run() {
     if (warmup > 0) {
         EASEL_LOG("--warmup %lld：只跑逻辑不渲染，预热 %lld 帧（dt 固定 1/60）", warmup, warmup);
         for (long long i = 0; i < warmup; ++i) {
+            // 帧号照样往前走：预热的就是「帧」，靠 app.frameCount() 驱动动画的作品必须
+            // 也能被 --warmup 快进，否则这个参数对它们等于没有。运行时长 elapsed() 不
+            // 跟着动——它是真实时钟，预热是一瞬间跑完的，硬凑一个假时间反而会在进主
+            // 循环时跳回去。
+            shared().frame++;
             if (d.onFrame) d.onFrame(1.0 / 60.0);
         }
     }
@@ -909,7 +991,13 @@ void App::frame() {
     }
     if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && d.welcomeOpen) d.welcomeOpen = false;
     if (d.onKey && !io.WantCaptureKeyboard) {
-        for (int k = ImGuiKey_NamedKey_BEGIN; k < ImGuiKey_NamedKey_END; ++k)
+        // 上界是 ImGuiKey_MouseLeft，不是 ImGuiKey_NamedKey_END：ImGui 1.89 起，鼠标键
+        // （ImGuiKey_MouseLeft/Right/Middle/X1/X2 和两个滚轮轴）以及内部保留的修饰键
+        // 存储位（ImGuiKey_ReservedForMod*）都排在具名按键区间的末尾，一路 IsKeyPressed
+        // 扫过去会把「点一下画布」也派发成一次按键 —— 学生写「按任意键重开」，鼠标
+        // 一点就重开了。Easel 的鼠标另有一套模型（onClick(Vec2, Mouse) + enum class
+        // Mouse），两套不能混着用，所以 onKey 只派发真正的键盘键，到鼠标别名为止。
+        for (int k = ImGuiKey_NamedKey_BEGIN; k < ImGuiKey_MouseLeft; ++k)
             if (ImGui::IsKeyPressed((ImGuiKey)k, false)) d.onKey(k);
     }
 
@@ -1025,13 +1113,18 @@ void App::frame() {
         d.frameInterval = d.targetFps > 0.0 ? 1.0 / d.targetFps : 0.0;
     }
 
-    internal::backend::present(d.win, d.clear);
+    // --frames N 的最后一帧：截图要在「画完、还没交换缓冲区」的那一刻拍。
+    // 以前是 present() 之后才 screenshot()，而 present() 最后一步是 glfwSwapBuffers()，
+    // readPixels() 读的 GL_BACK 那时已经不是刚画好的这一帧了（第一帧时更是一块没画过的
+    // 空缓冲）—— `--frames 1 --screenshot x.png` 存出纯色空图、还报成功就是这么来的。
+    // 所以「这是不是最后一帧」提前算好，截图动作交给 present() 在交换之前回调。
+    bool                  lastFrame = d.maxFrames > 0 && d.framesRun + 1 >= d.maxFrames;
+    std::function<void()> shot;
+    if (lastFrame && !d.shotPath.empty()) shot = [&] { screenshot(d.shotPath); };
+    internal::backend::present(d.win, d.clear, shot);
 
     ++d.framesRun;
-    if (d.maxFrames > 0 && d.framesRun >= d.maxFrames) {
-        if (!d.shotPath.empty()) screenshot(d.shotPath);
-        d.running = false;
-    }
+    if (lastFrame) d.running = false;
 }
 
 }  // namespace easel

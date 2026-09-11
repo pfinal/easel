@@ -75,10 +75,16 @@ README_TXT = """Easel {version} · Linux 发布包（x86_64）
 打不开、或者画面不对，跑一下（把输出发给维护者）：
     ./bin/easel --doctor
 
-命令行用法：
+命令行用法（也可以不带参数直接跑 `./bin/easel` 打开工作台窗口，点「新建工程」；
+下面这些是工作台自己的命令，不是你编出来的作品的命令行参数——那份在包里的
+easel/docs/cheatsheet.md 里）：
     ./bin/easel --new ~/projects --name Demo     # 新建工程（工程名只能用英文字母/数字/下划线）
     ./bin/easel --build ~/projects/Demo           # 编译
-    ./bin/easel --run ~/projects/Demo             # 运行
+    ./bin/easel --run ~/projects/Demo             # 编译并运行
+    ./bin/easel --package ~/projects/Demo         # 生成 exe（收进 dist/Demo-release/）
+    ./bin/easel --export ~/projects/Demo          # 导出自足源码（不装 Easel、不联网也能编）
+
+`--help` 列出全部参数；`--version` 看版本号；打错的参数会直接报错退出，不会开窗口。
 
 想更好敲，可以自己软链到 PATH 里（注意目标名一定是 bin/easel，不是包根）：
     ln -s "$PWD/bin/easel" ~/.local/bin/easel

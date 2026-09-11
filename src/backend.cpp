@@ -198,7 +198,7 @@ void newFrame() {
     ImGui::NewFrame();
 }
 
-void present(GLFWwindow* win, const Color& clear) {
+void present(GLFWwindow* win, const Color& clear, const std::function<void()>& beforeSwap) {
     ImGui::Render();
     int w = 0, h = 0;
     glfwGetFramebufferSize(win, &w, &h);
@@ -213,6 +213,7 @@ void present(GLFWwindow* win, const Color& clear) {
     g_ctx->OMSetRenderTargets(1, &g_rtv, nullptr);
     g_ctx->ClearRenderTargetView(g_rtv, c);
     ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+    if (beforeSwap) beforeSwap();   // 截图在这里（DX11 的 readPixels 还没实现，实际是空跑）
     g_swap->Present(1, 0);
 }
 
@@ -340,7 +341,7 @@ void newFrame() {
     ImGui::NewFrame();
 }
 
-void present(GLFWwindow* win, const Color& clear) {
+void present(GLFWwindow* win, const Color& clear, const std::function<void()>& beforeSwap) {
     ImGui::Render();
     int w = 0, h = 0;
     glfwGetFramebufferSize(win, &w, &h);
@@ -348,6 +349,9 @@ void present(GLFWwindow* win, const Color& clear) {
     glClearColor(clear.r, clear.g, clear.b, clear.a);
     glClear(GL_COLOR_BUFFER_BIT);
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    // 截图必须在 glfwSwapBuffers 之前：readPixels() 读 GL_BACK，而交换之后后台缓冲里
+    // 是上一帧（或者未定义的内容）。--frames 1 那张纯色空图就是这么来的。
+    if (beforeSwap) beforeSwap();
     glfwSwapBuffers(win);
 }
 

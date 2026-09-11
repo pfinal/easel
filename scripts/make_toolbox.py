@@ -139,6 +139,7 @@ rem 会把解析器的文件偏移弄错位，往后每一行都会被啃掉几�
 title daimaku C++ toolbox
 set "KIT=%~dp0"
 set "PATH=%KIT%w64devkit\\bin;%KIT%cmake\\bin;%KIT%ninja;%PATH%"
+set "EASEL_EXE=%KIT%easel\\build\\mingw\\easel.exe"
 echo.
 echo   代码酷 C++ 工具箱
 echo   ---------------------------------------------------------------
@@ -149,7 +150,19 @@ echo.
 echo   模板工程在 %KIT%easel\\template
 echo.
 echo   ** 一般不用这个黑框：双击目录里的 easel.bat 就行 **
-echo      （新建工程、编译、运行、生成 exe、导出源码，都在里面）
+echo      （新建工程、编译、运行、生成 exe、导出源码，都在里面，点「新建工程」开始）
+echo.
+echo   也可以不开界面，用命令行敲同样的事（先双击过一次 easel.bat 把它编出来才有）：
+echo       "%EASEL_EXE%" --new ^<父目录^> --name ^<作品名^>     新建工程
+echo       "%EASEL_EXE%" --build ^<工程目录^>                 编译
+echo       "%EASEL_EXE%" --run ^<工程目录^>                   编译并运行
+echo       "%EASEL_EXE%" --package ^<工程目录^>               生成 exe（收进 dist/^<名字^>-release/）
+echo       "%EASEL_EXE%" --export ^<工程目录^>                导出自足源码
+echo       "%EASEL_EXE%" --doctor                           环境自检
+echo      （--help 列出全部参数、--version 看版本号；打错的参数会直接报错退出，
+echo       不会开窗口。这些是 easel 工作台自己的命令，不是你编出来的作品的命令行
+echo       参数——那份在 easel\\docs\\cheatsheet.md 里；想少打点字可以自己
+echo       doskey easel="%EASEL_EXE%" $*）
 echo.
 echo   第一次用，先把模板拷成自己的工程：
 echo       xcopy /E /I "%KIT%easel\\template" "%KIT%我的作品"

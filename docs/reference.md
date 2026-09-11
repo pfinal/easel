@@ -49,12 +49,38 @@ App& welcome(const std::string& title, const std::string& desc, std::function<vo
 void closeWelcome();  bool welcomeOpen() const;   // 启动页：别让人一进来看到空白画布
 void toast(const std::string& s);                 // 顶部中间飘一条，两秒半后消失
 void status(const std::string& s);                // 底部状态栏文字（需 statusBar(true)）
-bool screenshot(const std::string& path);         // 把当前画面存成 PNG
+bool screenshot(const std::string& path);         // 把当前画面存成 PNG（见下面的注意）
+long long frameCount() const;                     // 现在是第几帧（Processing 的 frameCount）
+double elapsed() const;                           // 从启动到现在多少秒（Processing 的 millis()，单位是秒）
 Camera& camera();  Canvas& canvas();
 double dpiScale() const;  const char* backendName() const;
 void quit();
 static App* instance();
 ```
+
+`screenshot()` 在 `onDraw`/`onPanel` 里手动调时，读到的是**上一次呈现**的画面（这一帧
+还没画完、还没交换缓冲区），也就是慢一两帧。要"所见即所得"就用命令行的
+`--frames N --screenshot x.png`——那条路的截图卡在"画完、还没交换"的那一刻，存的
+一定是最后那一帧本身。
+
+**帧号与运行时长**——作品里想知道"现在是第几帧""跑了多久"，直接问 `app`，不用自己
+在 State 里加计数器，也不用自己 `new` 一个 `Stopwatch`：
+
+```cpp
+app.onDraw([&](Canvas& c) {
+    if (app.frameCount() % 30 == 0) ...;                  // 每半秒（60 帧）换一次
+    double t = app.elapsed();                              // 秒
+    c.circle({std::cos(t) * 100, std::sin(t) * 100}, 20);  // 转圈
+});
+```
+
+| 成员 | 类型 | 说明 |
+|---|---|---|
+| `app.frameCount()` | `long long` | 第一帧的回调里就是 `1`，之后每帧 +1。`--warmup N` 预热的那 N 帧**也算**（预热的就是"帧"，否则靠帧号驱动的动画会完全感觉不到 `--warmup`）；`--frames N` 数的是**画出来**的帧，所以有 `--warmup` 时两者差一个 N。F12 调试台里的「第 N 帧」、日志行首的 `fN` 都是同一个数 |
+| `app.elapsed()` | `double` | 秒，真实时钟。同一帧里多次调用返回同一个值（帧开头取一次，整帧沿用），所以 `onFrame` 和 `onDraw` 算出来的动画相位不会错开。`--warmup` **不**推进它——预热是一瞬间跑完的 |
+
+只读，没有对应的 setter：想要"自己的计时/计数"就自己留一个变量，框架这两个数永远
+如实反映真实的帧和时间。
 
 <a id="onframe"></a>
 ### 回调
@@ -90,8 +116,16 @@ static App* instance();
 
 ## 2. 画布与坐标
 
-- 位置、半径、矩形：世界坐标；线宽、字号：屏幕像素。
-- 世界坐标系 y 轴向下（同屏幕/Scratch/Processing）。
+- 位置、半径、矩形：世界坐标；线宽、字号、圆角半径：屏幕像素。
+- 世界坐标系 y 轴**向下**：和屏幕像素、Processing / p5.js / openFrameworks / HTML canvas
+  一致。**和 Scratch 不一样**——Scratch 的 y 轴向上、原点在舞台正中、范围是
+  x ±240、y ±180（180 是最上面）。从 Scratch 过来的话最直接的换算是把 y 取反：
+  Scratch 的 `(x, y)` 在这里写成 `{x, -y}`。
+- **一次 `fit()` 都不调的时候，画布看到的是什么**：世界原点 `{0, 0}` 在画布正中，
+  1 个世界单位 = 1 个屏幕像素（相机默认 `center={0,0}`、`zoom=1`）。也就是说
+  `c.circle({0, 0}, 50)` 是正中一个半径 50 像素的圆，`{100, 0}` 在它右边 100 像素，
+  `{0, 100}` 在它**下面** 100 像素。想按自己的数据范围取景就调一次
+  `app.camera().fit(...)`（见下面 [`Camera`](#camera)）。
 
 <a id="坐标"></a>
 ```cpp
@@ -122,7 +156,8 @@ void panZoom(bool enabled);                                // 关闭滚轮缩放
 void scaleBar(double* metersPerUnit, const char* unitName = "米");   // 传指针，改变量值比例尺即时更新
 ```
 
-`app.camera()` 获取当前实例。默认交互：滚轮缩放（以鼠标为中心）、中键或空格+左键拖拽平移。
+`app.camera()` 获取当前实例；在 `onDraw` 里手边只有画布时，`c.camera()` 拿到的是同一个。
+默认交互：滚轮缩放（以鼠标为中心）、中键或空格+左键拖拽平移。
 
 ---
 
@@ -138,7 +173,14 @@ void polyline(const std::vector<Vec2>& pts, bool closed = false);   // closed=tr
 
 <a id="c-rect"></a>
 ```cpp
-void rect(const Rect& r);   // Rect(x, y, w, h)；填充/描边取决于当前 fill/stroke 状态
+void rect(const Rect& r, double roundingPx = 0);
+// Rect(x, y, w, h)；填充/描边取决于当前 fill/stroke 状态。
+// roundingPx 是圆角半径，单位**屏幕像素**（和 strokeWidth 同类，不随缩放变大）；
+// 0 = 直角。超过短边一半会被夹到一半（正方形给个大值就是一个圆）。
+//     c.fill(th.accent); c.rect(Rect(-60, -40, 120, 80), 12);   // 圆角卡片
+// 限制：当前**有变换**时（push().translate()/rotate()/scale() 之后），矩形不再轴对齐，
+// 走的是四边形那条绘制路径，**圆角会被忽略**，画出来是直角。需要圆角就别在旋转状态
+// 下画，或者自己用 polygon() 铺四个角。
 ```
 
 <a id="c-circle-dot"></a>
@@ -367,6 +409,7 @@ class Layer {
     void beginShape();  void vertex(const Vec2&);  void endShape(bool closed = true);
     // 没有 textWorld()：Layer 里的 text() 和 Canvas::text() 一样只有锚点跟变换，
     // 字形不转；要「跟着转的字」现场用 c.textWorld() 画，Layer 存不住那个。
+    // rect() 也没有圆角参数（只有 Canvas::rect 有），Layer 里的矩形一律是直角。
 
     Layer& follow(const Canvas& c);   // 接下来落的笔按 c 此刻的变换矩阵变换后再存
     Layer& noFollow();                // 切回绝对世界坐标（默认状态）
@@ -777,6 +820,7 @@ App 内置的（构造 `App` 时自动解析）：
 
 | 参数 | 作用 |
 |---|---|
+| `-h`, `--help` | 打印这张表（框架级参数）然后退出，不开窗口。作品自己定义的参数列不出来——框架不知道有哪些 |
 | `--open <文件>` | 启动时打开它（`app.openPath()` 取） |
 | `--solve` | 打开之后直接算（`app.wantsSolve()` 判断） |
 | `--seed N` | 指定随机种子（不给则每次运行换新的，启动时打日志） |
@@ -787,8 +831,8 @@ App 内置的（构造 `App` 时自动解析）：
 | `--edit-run` | 打开编辑栏并立刻编译运行一次（CI 用） |
 | `--export [目录]` | 导出可独立编译的完整工程，然后退出 |
 | `--quiet` | `EASEL_TRACE`/`EASEL_LOG` 不往终端刷屏 |
-| `--frames N` | 跑 N 帧自动退出（CI / 截图用） |
-| `--screenshot <png>` | 退出前存一张截图 |
+| `--frames N` | 跑 N 帧自动退出（CI / 截图用）。**N 必须 ≥ 1**：`--frames 0` 是非法值，会报错并以退出码 2 退出，不会开窗口——想"一直跑"就别加这个参数（"不限制"是 `--fps 0` 的意思，别和它记混） |
+| `--screenshot <png>` | 退出前存一张截图：存的是**最后那一帧画好的画面**（在交换缓冲区之前抓的），所以 `--frames 1 --screenshot x.png` 存的就是第一帧本身 |
 | `--fps N` | 帧率上限（`0` = 不限制），覆盖代码里 `frameRate()` |
 | `--warmup N` | 进入正常循环前先空转 N 帧（只调 `onFrame(dt)`，`dt` 固定 `1/60`，**不渲染**），再开始正常帧 |
 
@@ -815,6 +859,16 @@ App 内置的（构造 `App` 时自动解析）：
 | `easel --run <工程目录> [--args "..."] [--json]` | 编译后运行作品，等它退出；`--args` 把参数转给作品 | `easel --run ~/projects/Demo --args "--frames 30"` |
 | `easel --package <工程目录> [--json]` | Release 构建 + 收进 `dist/<名字>-release/` | `easel --package ~/projects/Demo` |
 | `easel --export <工程目录> --out <目录> [--json]` | 导出一个能独立编译的完整工程 | `easel --export ~/projects/Demo --out ~/out` |
+| `easel -h` / `easel --help` | 打印工作台的完整用法 | `easel --help` |
+| `easel -V` / `easel --version` | 打印版本、提交、abi、编译器 | `easel --version` |
+
+工作台的参数表是固定的，所以它会**拒绝认不出的参数**：`easel --badarg` 打一行
+「不认识的参数：--badarg」加完整用法，以退出码 2 退出，**不开窗口**。作品那边正好相反
+——学生的作品会用 `cli::args().num("pad", 40)` 自定义参数，框架无从判断哪些名字合法，
+所以作品只加 `--help`，绝不拒绝认不出的参数。
+
+`--example` 写错名字时会把这份 Easel 里真正可用的示例都列出来
+（扫的是 `<easel 目录>/examples` 下带 `main.cpp` 的子目录）。
 
 **在 Easel 仓库自己的开发机上**（不是发布包/工具箱），`--new` 建的工程默认会从源码编
 ImGui/GLFW（头一回 3 分钟）。先跑一次 `cmake --build build/default --target prebuilt`

@@ -31,7 +31,11 @@ void applyTheme(const Theme& t);
 namespace backend {
 bool        init(const char* title, int w, int h, bool visible, GLFWwindow** outWindow);
 void        newFrame();
-void        present(GLFWwindow* win, const Color& clear);
+// 把这一帧真正画出去，然后交换缓冲区。beforeSwap 非空时，在「画完了、还没交换」的
+// 那一刻调一次 —— 截图必须卡在这个位置：readPixels() 读的是后台缓冲，交换之后后台
+// 缓冲里装的已经是别的东西（上一帧，或者第一帧时干脆是没画过的空缓冲）。
+void        present(GLFWwindow* win, const Color& clear,
+                    const std::function<void()>& beforeSwap = {});
 void        shutdown();
 const char* name();
 std::string gpu();
@@ -263,6 +267,9 @@ std::string      toolchainVersion();     // 阻塞最多 2 秒，只在自检里
 // 实现在 app.cpp（要用到 EASEL_GIT_SHA / EASEL_ABI / EASEL_BUILT_WITH 这几个只有
 // 编译 easel 库时才看得见的宏）。
 std::string banner(const std::string& projectDir = {});
+// banner() 的第一行：版本 · 提交 · abi · 编译器。`easel --version` 打的就是它
+// （那三个宏是 easel target 私有的，workbench/main.cpp 自己拼不出来）。
+std::string versionLine();
 // 字节数 -> "1.2 MB" 这种人话；秒数 -> "[  2.1s] " 这种右对齐的时间戳前缀。
 // 编译产物大小、每一步日志的时间戳都靠它们，workbench 和 doctor() 都用得到。
 std::string formatBytes(long long bytes);

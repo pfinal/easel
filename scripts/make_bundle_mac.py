@@ -83,7 +83,8 @@ README_TXT = """Easel {version} · macOS 发布包
 架构、不用挑版本——同一个 Easel.app 在两种 Mac 上都能直接跑。
 
 把 Easel.app 拖进「应用程序」（/Applications）即可，双击打开工作台（第一次可能
-要右键 -> 打开，绕开「无法验证开发者」提示）。
+要右键 -> 打开，绕开「无法验证开发者」提示）。打开后点左上角「新建工程」就能开始，
+不用先碰命令行。
 
 第一次用之前，先在终端里装好 Xcode 命令行工具：
     xcode-select --install
@@ -93,10 +94,20 @@ README_TXT = """Easel {version} · macOS 发布包
 打不开、或者画面不对，在终端里跑（把输出发给维护者）：
     /Applications/Easel.app/Contents/MacOS/Easel --doctor
 
-命令行用法（Contents/ 下有个 easel 软链，指向 Contents/MacOS/Easel，两种写法都行）：
-    /Applications/Easel.app/Contents/easel --build ~/projects/Demo
+命令行用法（Contents/ 下有个 easel 软链，指向 Contents/MacOS/Easel，两种写法都行；
+下面这些是工作台自己的命令，不是你编出来的作品的命令行参数——那份在发布包
+docs/cheatsheet.md 里；先软链到 /usr/local/bin 之后就能直接敲 easel，见下面）：
 
-想更好敲，可以自己软链到 /usr/local/bin：
+    /Applications/Easel.app/Contents/easel --new ~/projects --name Demo   新建工程（工程名只能用英文字母/数字/下划线）
+    /Applications/Easel.app/Contents/easel --build ~/projects/Demo        编译
+    /Applications/Easel.app/Contents/easel --run ~/projects/Demo          编译并运行
+    /Applications/Easel.app/Contents/easel --package ~/projects/Demo      生成 exe（收进 dist/Demo-release/）
+    /Applications/Easel.app/Contents/easel --export ~/projects/Demo       导出自足源码（不装 Easel、不联网也能编）
+    /Applications/Easel.app/Contents/easel --doctor                       环境自检
+
+`--help` 列出全部参数；`--version` 看版本号；打错的参数会直接报错退出，不会开窗口。
+
+想更好敲，可以自己软链到 /usr/local/bin（之后上面几条就能直接写成 `easel --build ...`）：
     ln -s /Applications/Easel.app/Contents/easel /usr/local/bin/easel
 """
 

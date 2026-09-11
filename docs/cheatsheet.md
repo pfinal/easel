@@ -82,11 +82,20 @@ int main(int argc, char** argv) {
 }
 ```
 
-命令行：`app --open data/x.json --solve`（跳过点击） · `--doctor`（自检） ·
+### 命令行参数——**这是你编出来的作品接受的参数，不是 `easel` 工作台的命令**
+
+上面这段 `main` 编出来的可执行文件（`app.exe` / `app`，双击「编译并运行」时跑起来的那个子进程）
+认这些参数；工作台自己的命令表（`--new` / `--build` / `--run` / `--package` / `--export` / `--doctor`）
+在 [`reference.md`](reference.md) 和两份 `README` 里，两套命令别混着敲。
+
+`你的作品 --open data/x.json --solve`（跳过点击） · `--doctor`（自检） ·
 `--debug`（直接开调试台） · `--edit`（直接开编辑栏） · `--edit-run`（开起来就编译运行一次） ·
 `--export <目录>`（导出可独立编译的工程，不开窗口） · `--seed N` ·
-`--frames N --screenshot a.png`（截图） · `--fps N`（帧率上限，`0` = 不限制） ·
-`--warmup N`（先空转 N 帧只跑逻辑不渲染，再开始正常帧——截「要等几秒才发生」的效果配合 `--frames --screenshot` 用）
+`--frames N --screenshot a.png`（截图；`N` 必须 **≥ 1**，`0` 或负数直接报错、退出码 2——
+「一直跑」本来就不用加 `--frames`，「帧率不限制」是另一个参数 `--fps 0`，两者别搞混） ·
+`--fps N`（帧率上限，`0` = 不限制） ·
+`--warmup N`（先空转 N 帧只跑逻辑不渲染，再开始正常帧——截「要等几秒才发生」的效果配合 `--frames --screenshot` 用） ·
+`--help`（列出全部参数；认不出的参数会报错退出，不会开窗口）
 
 ## 工作台 —— 从这里开始（D-29）
 
@@ -102,7 +111,9 @@ int main(int argc, char** argv) {
 | 生成 exe | Release 版 + assets/data + README.txt，放进 `dist/<名字>-release/`，可以直接双击 |
 | 导出源码 | 自足的完整工程，不装 Easel、不联网也能编 |
 
-第一次编要几分钟（要把 ImGui/GLFW/ImPlot 编出来），之后改一行大约 6 秒。
+发布包带着预编译好的 Easel（ImGui/GLFW/ImPlot 已经编过一遍），新建工程第一次编译只要几秒钟。
+「几分钟」说的是另一件事——从源码树自己编 Easel 本身（工作台、库、依赖全部从头过一遍），
+只有改 Easel 源码或者没用发布包的人才会遇到。往后不管哪种，改一行代码重编大约都是 6 秒。
 
 ## 编辑栏（F9）—— 兜底：机器上没有 VS Code 时改算法
 
@@ -246,6 +257,21 @@ t.accent  t.accent2  t.bg  t.surface  t.fg  t.muted  t.good  t.warn  t.bad  t.ra
 t.fontPath = "assets/fonts/我的字体.ttf";   // 不设就自动找系统中文字体
 ```
 
+## Easel 故意没有的东西
+
+找不到就是真没有，别再翻头文件——下面这些目前都没做，绕过去的办法一起写了：
+
+| 没有 | 绕过去的办法 |
+|---|---|
+| 混合模式（加法混合 / 正片叠底之类，只有普通的透明叠加） | 发光/叠亮效果用半透明多画几层：`c.alpha(0.3)` 反复画同一个图形 |
+| 圆角矩形（`c.rect()` 只有直角） | 自己用 `beginShape`/`vertex`/`endShape` 拼出圆角，或者直接调 `ImGui::GetWindowDrawList()->AddRectFilled(..., rounding)` |
+| 渐变填充（`fill()` 只认纯色） | 贴一张渐变图当纹理用 `c.image()`，或者自己分段画多个纯色图形模拟 |
+| 裁剪 / 遮罩（clip region） | 没有画布级裁剪；ImGui 的 `PushClipRect` 能顶一部分场合 |
+| 视频播放（只有图片和精灵表） | 序列帧图片当动画放，或者用 `Graphics` 离屏画布自己合成 |
+| 内置粒子系统 | 自己写一个 `std::vector<Particle>`，`onFrame` 里更新、`onDraw` 里画 |
+
+`frameCount` / `millis()` 这类计时器还在做，不在这张表里——真没有的时候才信这张表。
+
 ---
 
 # 第二页 · 出问题了怎么办
@@ -292,8 +318,9 @@ t.fontPath = "assets/fonts/我的字体.ttf";   // 不设就自动找系统中�
    → 回到界面看                             app --open ... --solve
 ```
 
-**能这么干的前提是种子固定**：不加 `--seed` 时每次结果都一样，所以命令行复现的就是你在
-界面里看到的那一次。
+**能这么干的前提是把种子一起带上**：不加 `--seed` 时每次运行都会换一颗新种子，结果
+也跟着变——`--case` 导出的用例文件本身记录着当时的种子，跑那条现成命令自然就是同一次；
+只有 `--seed N` 复现某一次时，`N` 必须是日志里打出来的那个数，不是随便一个固定值。
 
 ## 对拍器
 
@@ -326,4 +353,4 @@ auto rep = EASEL_CROSSCHECK(200, gen, fast, slow);   // 不一致就存 debug/du
 
 ---
 
-Easel v0.1.0 · 代码酷 daimaku.net · MIT
+Easel v0.1.1 · 代码酷 daimaku.net · MIT

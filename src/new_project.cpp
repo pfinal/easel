@@ -321,7 +321,13 @@ NewProjectReport createProject(const NewProjectOptions& opt) {
             return r;
         }
     } else if (!existsU8(joinPath(opt.exampleDir, "main.cpp"))) {
-        r.error = "示例目录里没有 main.cpp：" + opt.exampleDir;
+        // 正常走不到这里：调用方（工作台的 --example、新建工程对话框的骨架下拉）挑的都是
+        // 「扫 <easelDir>/examples 扫出来的、确实带 main.cpp 的目录」。真走到了说明这份
+        // Easel 的 examples/ 装残了或被删过——报示例名就够了，别把程序内部的完整路径
+        // （.app 包里的 .../Contents/Resources/easel/examples/xxx）甩给学生看，那既不是
+        // 他能改的地方，也看不出问题出在哪；顺带给两条不依赖示例的退路。
+        r.error = "示例 " + baseName(opt.exampleDir) + " 装得不完整（目录里没有 main.cpp）。" +
+                  "换一个示例试试；不用示例也行——空白工程和算法骨架都不需要 examples/。";
         return r;
     }
 

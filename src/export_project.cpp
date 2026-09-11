@@ -377,7 +377,11 @@ ExportReport exportProject(const ExportOptions& opt) {
     txt += "================================================\n\n";
     txt += "导出目录：" + root + "\n";
     char buf[128];
-    std::snprintf(buf, sizeof buf, "%d 个文件，%.1f MB\n\n", c.files, c.bytes / 1e6);
+    // 大小一律走 formatBytes()（1 MB = 1024 KB），跟工作台日志里所有「编译完成 →
+    // xx MB」「生成完成 → xx MB」是同一个口径。这里以前是 c.bytes / 1e6（十进制 MB），
+    // 于是同一次导出会报出两个数：CHECK.txt 和这条日志说 56.0 MB，工作台那行
+    // 「导出完成 →（… 53.4 MB）」说 53.4 MB —— 字节数其实一样，只是除数不一样。
+    std::snprintf(buf, sizeof buf, "%d 个文件，%s\n\n", c.files, formatBytes(c.bytes).c_str());
     txt += buf;
     for (const std::string& l : r.checks) txt += "  " + l + "\n";
     if (!missing.empty()) {
@@ -388,7 +392,7 @@ ExportReport exportProject(const ExportOptions& opt) {
     writeTextU8(joinPath(root, "CHECK.txt"), txt);
     r.checklist = txt;
 
-    EASEL_LOG("导出工程：%s（%d 个文件，%.1f MB，%s）", root.c_str(), c.files, c.bytes / 1e6,
+    EASEL_LOG("导出工程：%s（%d 个文件，%s，%s）", root.c_str(), c.files, formatBytes(c.bytes).c_str(),
               r.ok ? "自检全过" : "自检有问题，看 CHECK.txt");
     return r;
 }

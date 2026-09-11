@@ -234,12 +234,15 @@ void Canvas::dot(const Vec2& c, double radiusPx) {
         dl->AddCircle(iv(s), r, col(applyAlpha(st_.strokeColor)), 0, (float)(st_.strokeWidth * dpi_));
 }
 
-void Canvas::rect(const Rect& r) {
+void Canvas::rect(const Rect& r, double roundingPx) {
     if (!dl_) return;
     ImDrawList* dl = (ImDrawList*)dl_;
     ++stats_.primitives;
     ++stats_.rects;
     // 转过之后矩形不再轴对齐，交给四边形去画。
+    // 这条路上圆角只能忽略：ImGui 的倒角是 AddRect/AddRectFilled 在轴对齐矩形上做的，
+    // 四边形那条路（AddConvexPolyFilled + 折线描边）没有对应的能力，真要支持就得自己
+    // 按四个角铺圆弧顶点。旋转着的矩形要圆角是很少见的需求，不值得为它多一套几何。
     if (!mat_.identity()) {
         std::vector<Vec2> sp = {project(r.min()), project({r.right(), r.top()}), project(r.max()),
                                 project({r.left(), r.bottom()})};
@@ -252,9 +255,14 @@ void Canvas::rect(const Rect& r) {
     Vec2 a = toScreen(r.min()), b = toScreen(r.max());
     if (!Rect::fromCorners(a, b).overlaps(screen())) ++stats_.offscreen;
     if (st_.alpha <= 0) { ++stats_.invisible; return; }
-    if (st_.hasFill) dl->AddRectFilled(iv(a), iv(b), col(applyAlpha(st_.fillColor)));
+    // 圆角半径按 DPI 缩放（和 strokeWidth 同一套：参数给的是逻辑像素），再夹到半个短边
+    // 以内——ImGui 对超过一半边长的 rounding 会画出很怪的形状，夹住比画错好。
+    float rounding = (float)(std::max(roundingPx, 0.0) * dpi_);
+    rounding = std::min(rounding, (float)(std::min(std::fabs(b.x - a.x), std::fabs(b.y - a.y)) * 0.5));
+    if (st_.hasFill) dl->AddRectFilled(iv(a), iv(b), col(applyAlpha(st_.fillColor)), rounding);
     if (st_.hasStroke && st_.strokeWidth > 0)
-        dl->AddRect(iv(a), iv(b), col(applyAlpha(st_.strokeColor)), 0.f, 0, (float)(st_.strokeWidth * dpi_));
+        dl->AddRect(iv(a), iv(b), col(applyAlpha(st_.strokeColor)), rounding, 0,
+                    (float)(st_.strokeWidth * dpi_));
 }
 
 // 文字永远是正的（旋转的文字 ImGui 画不了），矩阵只决定它落在哪。

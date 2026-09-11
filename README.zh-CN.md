@@ -80,6 +80,25 @@ New Project / Build & Run / Stop / Build exe / Export source。项目以独立�
 
 每个按钮都有命令行等价物（`--build` / `--run` / `--package` / `--export`，还有无头的 `--new`）；加 `--json` 拿到机器可读的结果，例如 `easel --build ~/projects/Demo --json`。
 
+### `easel` 命令速查表
+
+这里说的是工作台本身（`easel` / `Easel.app` / `easel.bat`），**不是**你用它编出来的作品——
+你自己的程序有另一套命令行参数，在 [`docs/cheatsheet.md`](docs/cheatsheet.md) 里，两套别搞混。
+
+| 要做什么 | 命令 |
+|---|---|
+| 打开工作台窗口 | `easel`（或 `easel <工程目录>`，打开时直接带上这个工程） |
+| 新建工程 | `easel --new <父目录> --name <作品名> [--full] [--example <示例名>] [--tests]` |
+| 编译 | `easel --build <工程目录>` |
+| 编译并运行 | `easel --run <工程目录> [--args "..."]` |
+| 生成 exe（打包给别人） | `easel --package <工程目录>` |
+| 导出自足源码 | `easel --export <工程目录> [--out <目录>]` |
+| 自检（后端 / GPU / 字体 / 编译器） | `easel --doctor [--verbose]` |
+
+`--build` / `--run` / `--package` / `--export` 后面都能加 `--json`，拿到机器可读的结果。
+macOS 上可执行文件在 `Easel.app/Contents/easel`；Linux 发布包里是 `bin/easel`——具体见上面各平台的说明。
+`easel --help` / `easel --version` 也能用；认不出的参数会直接报错退出，不会开窗口。
+
 ![Workbench](docs/screenshot-workbench.png)
 
 ## 调试台

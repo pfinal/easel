@@ -2,8 +2,12 @@
 //
 // 约定（和地图软件一样）：
 //   位置、半径、矩形 —— 世界坐标（米、格子，你自己定）
-//   线宽、字号       —— 屏幕像素（放大缩小时不会变粗、变大）
-//   y 轴向下 —— 和屏幕、Scratch、Processing 一样；往上画就用负数
+//   线宽、字号、圆角 —— 屏幕像素（放大缩小时不会变粗、变大）
+//   y 轴向下 —— 和屏幕像素、Processing / p5.js / openFrameworks / HTML canvas 一样；
+//              往上画就用负数。**和 Scratch 相反**：Scratch 的 y 向上、原点在舞台正中、
+//              范围 x ±240 / y ±180。从 Scratch 过来的把 y 取反就行：(x, y) -> {x, -y}。
+//   一次 fit() 都不调时：世界原点在画布正中，1 世界单位 = 1 像素（相机默认 center={0,0}、
+//              zoom=1），c.circle({0,0}, 50) 就是正中一个半径 50 像素的圆。
 // 想要「不随缩放变大的圆点」用 dot()，想要「真实大小的圆」用 circle()。
 //
 // 变换栈（Processing 的 pushMatrix/translate/rotate/scale）：
@@ -95,7 +99,12 @@ public:
     void polyline(const std::vector<Vec2>& pts, bool closed = false);
     void circle(const Vec2& c, double radiusWorld);
     void dot(const Vec2& c, double radiusPx = 5.0);       // 大小不随缩放变化
-    void rect(const Rect& r);
+    // roundingPx：圆角半径，屏幕像素（和 strokeWidth 一样是像素单位，不随缩放变大）。
+    // 0 = 直角。面板早就能圆角（Theme::radius），画布这边以前不行，补上。
+    // 注意：当前有变换（push().rotate()/scale() 等）时矩形不再轴对齐，走的是四边形那条
+    // 路，圆角**会被忽略**（ImGui 的 AddRect 只会给轴对齐矩形倒角）——需要圆角就别在
+    // 旋转状态下画，或者改用 polygon() 自己铺角。
+    void rect(const Rect& r, double roundingPx = 0.0);
     // 字号是屏幕像素，不随缩放变化；旋转/缩放对字形「看不见」——只有 at 这个锚点
     // 过变换矩阵，字形本身永远轴对齐地画出来（ImGui 画不了旋转的 AddText）。
     // image() 相反，四个角都过矩阵，会跟着转。想要字跟着 rotate()/scale() 转/缩，

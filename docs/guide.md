@@ -14,6 +14,17 @@ Easel 把 Scratch、Processing、openFrameworks 三种写法接到同一个库�
 
 ### 对应 Scratch
 
+> **坐标系跟 Scratch 不一样，先看这个再看下面的表。**
+> - **Scratch**：原点在舞台正中间，y 轴**向上**（最高 180，最低 -180），x 轴 ±240。
+> - **Processing / p5.js / openFrameworks / HTML canvas**：原点在画布**左上角**，y 轴向下。
+> - **Easel**：y 轴也向下，但原点**不是**左上角——一次 `fit()` 都不调时，相机默认
+>   `target_ = {0,0}`、`scale_ = 1.0`（1 世界单位 = 1 像素），世界原点落在**画布正中**。
+>   实际显示范围由 [`camera().fit(rect)`](cheatsheet.md#camera) 决定：`fit(Rect(0,0,20,12))`
+>   会把原点摆到左上角（跟 Processing 一样）；`fit(Rect(-50,-50,100,100))` 这种以
+>   `(0,0)` 为中心的范围，原点还是留在正中。`app.camera().fit(rect)` 或
+>   `c.camera().fit(rect)` 都行。照 Scratch 的直觉写「y 越大越往上」会全反过来，
+>   先把这条换算过来再抄下面的表。
+
 | Scratch 积木 | Easel 里的写法 |
 |---|---|
 | 移动 10 步 / 面向 90 方向 | [`Vec2`](reference.md#vec2) 加减、[`c.rotate()`](reference.md#c-rotate) |
@@ -49,7 +60,8 @@ Easel 把 Scratch、Processing、openFrameworks 三种写法接到同一个库�
 | `map() / lerp() / dist() / constrain()` | [`remap()`](reference.md#remap-lerp-clamp) / `lerp()` / `dist()` / [`clamp()`](reference.md#remap-lerp-clamp) |
 | `random() / randomSeed()` | [`rng().d()`](reference.md#rng) / [`seed()`](reference.md#rng) |
 | `mousePressed() / mouseX, mouseY` | [`App::onClick`](reference.md#onclick) / [`c.mouse()`](reference.md#坐标) |
-| `keyPressed()` | [`App::onKey`](reference.md#onkey) |
+| `keyPressed()`（按下的瞬间，只触发一次） | [`App::onKey`](reference.md#onkey) |
+| 持续按住一个键（比如方向键控制角色移动） | `ImGui::IsKeyDown(ImGuiKey_LeftArrow)`——在 `onFrame` 里每帧自己判断，`onKey` 不会重复触发，拿它做「按住移动」会撞墙 |
 | `PVector` | [`Vec2`](reference.md#vec2) |
 | 五个内置颜色模式 | [`Color::hex/rgb/hsv/gray`](reference.md#color) |
 | `saveFrame()` | `app.screenshot(path)` |
@@ -176,7 +188,9 @@ g++ -std=c++17 -DEASEL_STANDALONE src/solver.cpp -o solver && ./solver data/exam
    → 回到界面看
 ```
 
-这条闭环成立的前提是种子固定可复现（见 [reference.md#rng](reference.md#rng)）。
+这条闭环成立的前提是把种子带上：不加 `--seed` 时每次运行都会换一颗新种子，结果跟着变；
+导出的 case 文件已经存了当时的种子，跑现成命令就行，手动敲 `--seed N` 时 `N` 要用日志里
+打出来的那个数（见 [reference.md#rng](reference.md#rng)）。
 
 ---
 
