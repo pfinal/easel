@@ -40,6 +40,17 @@ bool button(const char* label, bool wide = false);
 bool select(const char* label, int* v, std::initializer_list<const char*> items);
 bool select(const char* label, int* v, const std::vector<std::string>& items);
 
+// 单行文字输入。v 是唯一真相源，内部自己管缓冲区——不用像 ImGui::InputText 那样
+// 自己开 char buf[N]、传 sizeof buf，长度也不再被 N 卡死。
+// input 只要这一帧内容变了（敲一个字符、删一个字符……）就返回 true，跟 slider
+// 拖动中每帧都 true 是一个道理，适合「打字的时候画面就跟着变」（01-dancing-name
+// 里要显示的文字）。要是这行字只是用来触发一次性的动作（重新生成、重新计算），
+// 每敲一个字符都触发一遍既没意义又浪费，这时候用 inputCommit——和 sliderCommit
+// 对 slider 的关系一样，只在敲完回车或失焦离开那一刻返回 true，其余帧都是 false
+//（09-monster-maker 里输入种子复现）。
+bool input(const char* label, std::string* v);
+bool inputCommit(const char* label, std::string* v);
+
 // 数据卡：一个大数字 + 单位 + 说明。面板上最像「软件」的那个元素。
 void stat(const char* label, const std::string& value, const char* unit = "");
 void stat(const char* label, double value, const char* unit = "", int decimals = 2);

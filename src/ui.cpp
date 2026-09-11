@@ -74,6 +74,37 @@ bool select(const char* label, int* v, const std::vector<std::string>& items) {
     return ImGui::Combo(id.c_str(), v, arr.data(), (int)arr.size());
 }
 
+// 文字输入：内部用一个 ImGui resize 回调把 ImGui::InputText 的 char* 缓冲区直接接到
+// std::string 头上（缓冲区就是 v->data()，不够长时回调里 resize 一下），学生完全看不
+// 到缓冲区这层，只跟 v 打交道——这是相对 ImGui::InputText(char*, size_t) 最大的简化。
+namespace {
+int inputResizeCallback(ImGuiInputTextCallbackData* data) {
+    if (data->EventFlag == ImGuiInputTextFlags_CallbackResize) {
+        std::string* str = (std::string*)data->UserData;
+        str->resize(data->BufTextLen);
+        data->Buf = str->data();
+    }
+    return 0;
+}
+
+// input/inputCommit 共用的画法，只是 flags 不同、要不要看 IsItemDeactivatedAfterEdit
+// 不同——跟 slider/sliderCommit 共用 slider() 是一回事。
+bool inputImpl(const char* label, std::string* v, ImGuiInputTextFlags flags) {
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    ImGui::TextUnformatted(label);
+    std::string id = std::string("##") + label;
+    flags |= ImGuiInputTextFlags_CallbackResize;
+    return ImGui::InputText(id.c_str(), v->data(), v->capacity() + 1, flags, inputResizeCallback, v);
+}
+}  // namespace
+
+bool input(const char* label, std::string* v) { return inputImpl(label, v, 0); }
+
+bool inputCommit(const char* label, std::string* v) {
+    inputImpl(label, v, 0);
+    return ImGui::IsItemDeactivatedAfterEdit();
+}
+
 bool toggle(const char* label, bool* v) { return ImGui::Checkbox(label, v); }
 
 bool button(const char* label, bool wide) {

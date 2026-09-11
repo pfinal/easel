@@ -558,6 +558,26 @@ if (ui::select("算法", &S.algo, {"冒泡排序", "选择排序"})) sortAll();
 ```
 选项数量固定用 `initializer_list` 这版最短；选项是运行时算出来的（文件名列表等）用 `vector<string>` 这版。
 
+<a id="ui-input"></a>
+```cpp
+bool input(const char* label, std::string* v);
+bool inputCommit(const char* label, std::string* v);
+```
+单行文字输入。`v` 是唯一真相源，内部自己管缓冲区——不用像 `ImGui::InputText` 那样自己开
+`char buf[N]`、传 `sizeof buf`，字符串长度也不再被 `N` 卡死。
+`input` 只要这一帧内容变了（敲一个字符、删一个字符……）就返回 `true`，跟 `slider` 拖动
+中每帧都 `true` 是一个道理，适合「打字的时候画面就跟着变」：
+```cpp
+if (ui::input("要显示的文字", &S.text)) { /* 文字随打随变，通常什么都不用做 */ }
+```
+要是这行字只是用来触发一次性的动作（重新生成、重新计算），每敲一个字符都触发一遍
+既没意义又浪费，这时候用 `inputCommit`——和 `sliderCommit` 对 `slider` 的关系一样，
+只在敲完回车或失焦离开那一刻返回 `true`，其余帧都是 `false`：
+```cpp
+if (ui::inputCommit("种子", &S.seedText))
+    S.mon = makeMonster((unsigned)std::strtoul(S.seedText.c_str(), nullptr, 10));
+```
+
 <a id="ui-stat-chart"></a>
 ```cpp
 void stat(const char* label, const std::string& value, const char* unit = "");

@@ -247,6 +247,8 @@ ui::slider("温度", &T0, 1.0, 5000.0);   ui::slider("点数", &n, 5, 50);
 ui::sliderCommit("温度", &T0, 1.0, 5000.0);   // 只在松手那一帧返回 true；参数改动要重算时用它，别用 slider
 ui::toggle("显示名称", &show);           ui::button("开始优化", true /*占满宽度*/)
 ui::select("算法", &algo, {"冒泡排序", "选择排序"});   // N 选一，*v 是选中项下标，返回值同 slider
+ui::input("文字", &text);          // 单行文字输入，v 是 std::string*，每敲一个字符就返回 true
+ui::inputCommit("种子", &seedText); // 和 sliderCommit 对 slider 的关系一样，回车/失焦才返回 true
 ui::stat("总里程", 4.72, "公里", 2);     ui::chart("收敛", ys, "总长度");
 ui::title("小标题")  ui::help("灰色说明")  ui::separator()  ui::spacing()  ui::sameLine()
 ```
