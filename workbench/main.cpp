@@ -147,6 +147,48 @@ std::vector<std::string> configureArgs(const std::string& proj, const std::strin
     return a;
 }
 
+// 构建目录已经 configure 过时，从它的 CMakeCache.txt 里读上一次写进去的 EASEL_DIR，
+// 好跟这次的 wb().easelDir 比一比（见下面 easelDirStale()）。缓存行形如
+// `EASEL_DIR:UNINITIALIZED=/path`，类型段不一定是 UNINITIALIZED，按 `EASEL_DIR:`
+// 前缀匹配、取第一个 `=` 之后的内容。读不到文件或者压根没有这一项就返回空串。
+std::string cachedEaselDir(const std::string& build) {
+    std::string text;
+    if (!readTextU8(joinPath(build, "CMakeCache.txt"), &text)) return {};
+    size_t start = 0;
+    while (start <= text.size()) {
+        size_t      nl = text.find('\n', start);
+        std::string line = text.substr(start, (nl == std::string::npos ? text.size() : nl) - start);
+        if (line.rfind("EASEL_DIR:", 0) == 0) {
+            size_t eq = line.find('=');
+            if (eq != std::string::npos) return line.substr(eq + 1);
+        }
+        if (nl == std::string::npos) break;
+        start = nl + 1;
+    }
+    return {};
+}
+
+// 规范化后再比——absPath() 只管补 cwd，不处理尾部斜杠，这里顺手去掉，避免
+// "/a/b" 和 "/a/b/" 被判成不一致，每次都白白多重新 configure 一次。
+std::string normEaselPath(const std::string& p) {
+    std::string a = p.empty() ? std::string() : absPath(p);
+    while (a.size() > 1 && (a.back() == '/' || a.back() == '\\')) a.pop_back();
+    return a;
+}
+
+// 构建目录已经 configure 过（有 CMakeCache.txt）时，判断现在的 easelDir 跟缓存里那份
+// 是否还对得上：`cmake --build` 不会重新读 -D 参数，CMakeCache.txt 里第一次写进去的
+// EASEL_DIR 会一直有效。不一致——或者缓存里压根没有这一项、而现在有值——就要重新
+// configure 一次；开发机上碰巧两份都在，顶多白编几分钟，仓库被挪走或删掉之后会
+// 直接编不出来，而且报错很难懂。三处走「有缓存就跳过 configure」快路径的调用点
+// （GUI 的 compileAndRun()、无头的 runBuild()、无头 --package 的 cmdPackage()）都要用它。
+bool easelDirStale(const std::string& build, const std::string& easelDir) {
+    // 这次压根不知道 Easel 在哪（easelDir 空，configureArgs() 就不会传 -DEASEL_DIR）：
+    // 别去动一个已经配好、能编的构建目录，否则等于把缓存里那份可用的路径白扔掉。
+    if (easelDir.empty()) return false;
+    return normEaselPath(cachedEaselDir(build)) != normEaselPath(easelDir);
+}
+
 std::string configPath() { return joinPath(exeDir(), "workbench.json"); }
 
 void loadConfig() {
@@ -382,10 +424,17 @@ void compileAndRun() {
     w.wantPackage = false;
     sayTS("工程 " + w.projectDir);
     if (cmakeMissing()) { flushLog(); return; }
-    if (existsU8(joinPath(buildDir(w.projectDir), "CMakeCache.txt")))
-        startBuild();
-    else
+    std::string build = buildDir(w.projectDir);
+    if (existsU8(joinPath(build, "CMakeCache.txt"))) {
+        if (easelDirStale(build, w.easelDir)) {
+            sayTS("Easel 位置变了，重新配置构建目录");
+            startConfigure();
+        } else {
+            startBuild();
+        }
+    } else {
         startConfigure();
+    }
     flushLog();
 }
 
@@ -721,7 +770,12 @@ BuildOutcome runBuild(const std::string& dir) {
 
     stamp("工程 " + dir);
 
-    if (!existsU8(joinPath(build, "CMakeCache.txt"))) {
+    bool needConfigure = !existsU8(joinPath(build, "CMakeCache.txt"));
+    if (!needConfigure && easelDirStale(build, wb().easelDir)) {
+        stamp("Easel 位置变了，重新配置构建目录");
+        needConfigure = true;
+    }
+    if (needConfigure) {
         std::vector<std::string> argv = configureArgs(dir, build, "RelWithDebInfo");
         stamp("构建目录 " + build + "（" + (tc.ninja.empty() ? "Unix Makefiles" : "Ninja") +
               " · RelWithDebInfo）");
@@ -904,7 +958,12 @@ int cmdPackage(const std::string& raw, bool jsonOut) {
     };
 
     stamp("工程 " + dir);
-    int cfgCode = existsU8(joinPath(rel, "CMakeCache.txt")) ? 0 : -1;
+    bool cacheExists = existsU8(joinPath(rel, "CMakeCache.txt"));
+    if (cacheExists && easelDirStale(rel, wb().easelDir)) {
+        stamp("Easel 位置变了，重新配置构建目录");
+        cacheExists = false;
+    }
+    int cfgCode = cacheExists ? 0 : -1;
     if (cfgCode != 0) {
         std::vector<std::string> argv = configureArgs(dir, rel, "Release");
         stamp("构建目录 " + rel + "（" + (tc.ninja.empty() ? "Unix Makefiles" : "Ninja") + " · Release）");

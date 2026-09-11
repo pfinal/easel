@@ -148,7 +148,11 @@ if(DEFINED EASEL_DIR)
                       "不一致：改用源码编（几分钟）")
       set(EASEL_PREBUILT_OK FALSE)
     endif()
-  else()
+  elseif(_easel_prebuilt_root)
+    # 找到了预编译包，但两边的版本信息都读不出来（比如 easel-prebuilt.json /
+    # VERSION.json 缺 abi 也缺 commit）：这种才是真的「没法核对版本」。
+    # 没找到预编译包（_easel_prebuilt_root 为空）不属于这种情况，不在这里打——
+    # 那种下面会照实走源码编，让那句「用本地的 Easel 源码」自己说话就够了。
     message(STATUS "没法核对版本，照用预编译")
   endif()
 endif()
