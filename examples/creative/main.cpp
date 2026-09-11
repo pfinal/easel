@@ -82,7 +82,9 @@ static void updateTrail(App& app) {
 
 // ---- 3. 噪声地形 —— Processing 的 noise() + map()（Easel 里叫 remap()）：飘动的山脉线 ----
 static void drawTerrain(Canvas& c) {
-    c.camera().fit(Rect(0, -40, 100, 80));
+    // 折线端点正好画在 x=0 和 x=100 这两条世界边界上，线宽 2.5 是屏幕像素、不随缩放变化，
+    // 世界坐标包围盒量不到它——严格贴合会把线头切掉一截，所以这里手动留 8px。
+    c.camera().fit(Rect(0, -40, 100, 80), 8);
     std::vector<Vec2> pts;
     for (double x = 0; x <= 100; x += 2)
         pts.push_back({x, remap(noise(x * 0.05, S.t * 0.3), 0, 1, 20, -20)});

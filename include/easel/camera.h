@@ -14,7 +14,11 @@ class App;   // 只用来 friend，见下面 setViewport/handleInput
 class Camera {
 public:
     // ---- 学生会用到的 ----
-    void   fit(const Rect& worldRect, double paddingPx = 40);  // 一键把这块区域装进画布
+    // 一键把这块世界区域装进画布：默认严格贴合（paddingPx = 0），worldRect 的四条边正好落在
+    // 画布四条边上。如果画面里有贴着边界的「屏幕像素尺寸」图元——dot() 的半径、text() 的字号、
+    // 粗线的线宽这些不随缩放变化、世界坐标包围盒又量不到的东西——严格贴合会把它们切掉一截，
+    // 这时自己传一个像素留白（比如 fit(rect, 20)）。
+    void   fit(const Rect& worldRect, double paddingPx = 0);
     void   center(const Vec2& w);                              // 把这个世界点放到画布中心
     Vec2   center() const { return target_; }
     void   zoom(double pixelsPerUnit);
@@ -57,7 +61,7 @@ private:
     // 等第一帧有了真正的视口再执行。
     bool   pendingFit_ = false;
     Rect   pendingRect_;
-    double pendingPad_ = 40;
+    double pendingPad_ = 0;
 };
 
 }  // namespace easel

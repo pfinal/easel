@@ -113,7 +113,9 @@ bool c.hovered();   // 鼠标是否在画布区域内（不含右侧面板）；
 ### `Camera`
 
 ```cpp
-void fit(const Rect& worldRect, double paddingPx = 40);   // 把该区域整个装入画布；run() 前调用也有效（延迟到首帧执行）
+void fit(const Rect& worldRect, double paddingPx = 0);    // 把该区域整个装入画布，默认严格贴合；run() 前调用也有效（延迟到首帧执行）
+                                                            // 画面里有贴边的屏幕像素图元（dot() 半径、text() 字号、粗线线宽）时，
+                                                            // 世界坐标包围盒量不到它们，严格贴合会切掉一截，这时传个像素留白
 void center(const Vec2& w);
 void zoom(double pixelsPerUnit);
 void panZoom(bool enabled);                                // 关闭滚轮缩放/拖拽平移
