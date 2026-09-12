@@ -34,7 +34,7 @@ bool button(const char* label, bool wide = false);
 
 // 下拉框（N 选一）。和 slider 一样，*v 是唯一真相源（存的是选中项的下标），
 // 返回 true 表示这一帧选项变了：
-//     if (ui::select("算法", &S.algo, {"冒泡排序", "选择排序"})) sortAll();
+//     if (ui::select("算法", &state.algo, {"冒泡排序", "选择排序"})) sortAll();
 // 选项数量固定、写在代码里就用 initializer_list 这版，最短；选项是运行时算出来的
 // （文件名列表、Theme::presets() 之类）就用 vector<string> 这版。
 bool select(const char* label, int* v, std::initializer_list<const char*> items);

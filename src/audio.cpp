@@ -137,8 +137,8 @@ struct Engine {
 
 // 单例，函数内 static（Meyers 单例，写法照抄 core.h 里的 rng()）。以前 g_audio 是
 // 命名空间级的全局对象，含 std::string/std::vector——学生写
-// `struct State { audio::Sound s = audio::load(...); } S;` 这种全局，S 在别的翻译
-// 单元里，跟这个翻译单元里的 g_audio 谁先构造是未定义行为：赌输了就是 S 的构造函数
+// `struct State { audio::Sound s = audio::load(...); } state;` 这种全局，state 在别的翻译
+// 单元里，跟这个翻译单元里的 g_audio 谁先构造是未定义行为：赌输了就是 state 的构造函数
 // 里摸到一个还没构造出来的 g_audio，崩在 main 之前，还没有调用栈——最难查的一类崩溃。
 // 改成函数内 static 后，Engine 只会在第一次真的被用到（第一次调 ensure()/audioState()）
 // 时才构造，不管这次调用是从哪个翻译单元、哪个全局的构造函数里发起的，都不会有「哪个

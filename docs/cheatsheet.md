@@ -78,7 +78,7 @@ int main(int argc, char** argv) {
 
     app.transport(tl);                       // 底部播放条
     app.welcome("标题", "一句话", []{ ... }); // 启动页
-    app.onExportCase([]{ return json(S); }); // 「导出调试用例」要导出什么
+    app.onExportCase([]{ return json(state); }); // 「导出调试用例」要导出什么
     app.status("准备好了");                   // 状态栏文字
     app.statusBar(true);                     // 底部状态栏默认不显示，要用就开（F12 打开时也会临时出现）
     app.frameRate(60);                       // 帧率上限，默认就是 60；垂直同步失效时的兜底

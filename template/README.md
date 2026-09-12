@@ -116,7 +116,7 @@ g++ -std=c++17 -DEASEL_STANDALONE src/solver.cpp -o solver && ./solver data/exam
 ## 目录
 
 ```
-src/solver.cpp        你的算法、数据结构、全局状态 S
+src/solver.cpp        你的算法、数据结构、全局状态 state
 src/app.cpp           界面接线（main 就是一份清单，没有算法）
 src/easel.hpp      Easel 的单文件核心（自动生成的，别手改）
 tests/test_solver.cpp 测试与对拍

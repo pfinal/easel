@@ -232,7 +232,7 @@ void tabCases(const Theme& th) {
     ImGui::EndDisabled();
     if (!can)
         ImGui::TextColored(iv4(th.warn),
-                           "还不能导出：main 里要写 app.onExportCase([]{ return json(S); });");
+                           "还不能导出：main 里要写 app.onExportCase([]{ return json(state); });");
     if (!lastPath.empty()) {
         ImGui::Spacing();
         ImGui::Text("最近导出：%s", lastPath.c_str());

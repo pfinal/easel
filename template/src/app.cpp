@@ -4,7 +4,7 @@
 //  它把 solver.cpp 整个 include 进来（unity include，D-23）。
 //  所以：改 solver.cpp -> 重编 app -> 立刻能在界面里看到，不用管头文件。
 // ============================================================================
-#include "solver.cpp"       // ← 你的算法、数据、全局 S 都在里面
+#include "solver.cpp"       // ← 你的算法、数据、全局 state 都在里面
 
 #include <easel/easel.h>
 
@@ -17,19 +17,19 @@ struct UiState {
     std::string     filePath;
     Texture         map;                  // 底图（可选）
 };
-UiState U;
+UiState uiState;
 
 static void runSolve(App& app) {
-    S.history = solve(S.project, S.params);
-    U.tl.load(S.history);
-    U.tl.play();
+    state.history = solve(state.project, state.params);
+    uiState.tl.load(state.history);
+    uiState.tl.play();
 
     // 把所有点装进画布
     std::vector<Vec2> pts;
-    for (const Node& n : S.project.nodes) pts.push_back(n.pos);
+    for (const Node& n : state.project.nodes) pts.push_back(n.pos);
     app.camera().fit(Rect::bounding(pts).expanded(5));
 
-    app.status(S.project.title + "：共 " + std::to_string((int)S.history.size()) + " 帧");
+    app.status(state.project.title + "：共 " + std::to_string((int)state.history.size()) + " 帧");
 }
 
 int main(int argc, char** argv) {
@@ -40,28 +40,28 @@ int main(int argc, char** argv) {
 
     // ---- 启动时的数据：--open 优先，其次内置示例（D-21）----
     std::string path = app.openPath();
-    if (path.empty() || !loadProject(path, &S.project)) S.project = makeExample();
-    U.filePath = path;
+    if (path.empty() || !loadProject(path, &state.project)) state.project = makeExample();
+    uiState.filePath = path;
 
     // 底图要等显卡准备好才能加载，所以放在 onStart 里
     app.onStart([&] {
         // 想铺一张底图（地图、平面图、照片）就把它放进 assets/，改成你的文件名
-        if (fs::exists("assets/map.png")) U.map = loadTexture("assets/map.png");
+        if (fs::exists("assets/map.png")) uiState.map = loadTexture("assets/map.png");
     });
 
     // ---- 画布 ----
     app.onDraw([&](Canvas& c) {
         // 底图铺在世界坐标的这一块上。换成你自己的图时改这个矩形。
-        if (U.map) c.image(U.map, Rect(-60, -40, 120, 80));
+        if (uiState.map) c.image(uiState.map, Rect(-60, -40, 120, 80));
 
-        const Frame& f = U.tl.current();     // 时间线是空的时候会给一个默认帧，不用判空
-        const std::vector<Node>& nodes = S.project.nodes;
+        const Frame& f = uiState.tl.current();     // 时间线是空的时候会给一个默认帧，不用判空
+        const std::vector<Node>& nodes = state.project.nodes;
 
         // 路线
         std::vector<Vec2> pts;
         for (int i : f.order)
             if (i >= 0 && i < (int)nodes.size()) pts.push_back(nodes[i].pos);
-        if (U.compare) {                                   // 现状：橙色虚线
+        if (uiState.compare) {                                   // 现状：橙色虚线
             std::vector<Vec2> orig;
             for (const Node& n : nodes) orig.push_back(n.pos);
             c.stroke(app.theme().accent2, 2.0).dashed(6, 5).polyline(orig);
@@ -71,10 +71,10 @@ int main(int argc, char** argv) {
 
         // 点
         for (int i = 0; i < (int)nodes.size(); ++i) {
-            bool hot = (i == U.selected) || (i == f.focus);
+            bool hot = (i == uiState.selected) || (i == f.focus);
             c.fill(hot ? app.theme().accent2 : app.theme().good).stroke(Color::gray(0.1f), 1.5);
             c.dot(nodes[i].pos, hot ? 9 : 6);
-            if (U.showLabels) {
+            if (uiState.showLabels) {
                 // 底图是浅色的，所以名字用深色写；换成深色底图记得把这行也改了
                 c.noStroke().fill(Color::hex(0x1B2119)).textSize(13);
                 c.text(nodes[i].pos + Vec2(0, -18 / c.zoom()), nodes[i].name, Align::Center);
@@ -85,26 +85,26 @@ int main(int argc, char** argv) {
     // ---- 右侧面板 ----
     app.onPanel([&] {
         if (ui::section("工程")) {
-            ui::stat("点数", (int)S.project.nodes.size(), "个");
-            if (!U.tl.empty()) ui::stat("当前目标值", U.tl.current().cost, "", 1);
+            ui::stat("点数", (int)state.project.nodes.size(), "个");
+            if (!uiState.tl.empty()) ui::stat("当前目标值", uiState.tl.current().cost, "", 1);
             if (ui::button("打开…")) {
                 std::string p = file::open("工程文件", "json");
-                if (!p.empty() && loadProject(p, &S.project)) { U.filePath = p; runSolve(app); }
+                if (!p.empty() && loadProject(p, &state.project)) { uiState.filePath = p; runSolve(app); }
             }
             ui::sameLine();
             if (ui::button("保存…")) {
                 std::string p = file::save("project.json");
-                if (!p.empty()) saveProject(p, S.project);
+                if (!p.empty()) saveProject(p, state.project);
             }
         }
         if (ui::section("参数")) {
-            ui::slider("迭代次数", &S.params.iterations, 10, 5000);
-            ui::slider("系数 alpha", &S.params.alpha, 0.0, 1.0);
+            ui::slider("迭代次数", &state.params.iterations, 10, 5000);
+            ui::slider("系数 alpha", &state.params.alpha, 0.0, 1.0);
             if (ui::button("开始优化", true)) runSolve(app);
         }
         if (ui::section("显示")) {
-            ui::toggle("显示名称", &U.showLabels);
-            ui::toggle("对比：现状 vs 优化后", &U.compare);
+            ui::toggle("显示名称", &uiState.showLabels);
+            ui::toggle("对比：现状 vs 优化后", &uiState.compare);
             // 主题就是数据，五套预设一行切换（D-22）
             static int themeIndex = 0;
             if (ui::select("配色", &themeIndex, {"Forest 绿", "Ocean 蓝", "Ember 橙", "Paper 米白", "Slate 灰蓝"}))
@@ -112,7 +112,7 @@ int main(int argc, char** argv) {
         }
         if (ui::section("收敛曲线")) {
             std::vector<double> ys;
-            for (const Frame& f : U.tl.frames()) ys.push_back(f.cost);
+            for (const Frame& f : uiState.tl.frames()) ys.push_back(f.cost);
             ui::chart("##conv", ys, "目标值");
         }
     });
@@ -122,23 +122,23 @@ int main(int argc, char** argv) {
         if (b != Mouse::Left) return;
         int    best = -1;
         double bd = 1e18;
-        for (int i = 0; i < (int)S.project.nodes.size(); ++i) {
-            double d = dist(w, S.project.nodes[i].pos);
+        for (int i = 0; i < (int)state.project.nodes.size(); ++i) {
+            double d = dist(w, state.project.nodes[i].pos);
             if (d < bd) { bd = d; best = i; }
         }
-        U.selected = (bd * app.camera().zoom() < 20) ? best : -1;
-        if (U.selected >= 0) EASEL_LOG("选中了 %s", S.project.nodes[U.selected].name.c_str());
+        uiState.selected = (bd * app.camera().zoom() < 20) ? best : -1;
+        if (uiState.selected >= 0) EASEL_LOG("选中了 %s", state.project.nodes[uiState.selected].name.c_str());
     });
 
     // ---- 拖拽：把选中的点挪个位置 ----
     app.onDrag([&](const Drag& d) {
-        if (d.button == Mouse::Left && U.selected >= 0)
-            S.project.nodes[U.selected].pos += d.delta;
+        if (d.button == Mouse::Left && uiState.selected >= 0)
+            state.project.nodes[uiState.selected].pos += d.delta;
     });
 
     // ---- 调试台的「导出调试用例」要导出什么（D-23 第 7 条）----
     app.onExportCase([] {
-        return json{{"project", S.project}, {"params", S.params}};
+        return json{{"project", state.project}, {"params", state.params}};
     });
 
     // ---- 启动页：先让人看到东西，别给一块白板（D-21）----
@@ -147,12 +147,12 @@ int main(int argc, char** argv) {
                     if (ui::button("打开示例数据（推荐）", true)) { runSolve(app); app.closeWelcome(); }
                     if (ui::button("打开我的文件…", true)) {
                         std::string p = file::open("工程文件", "json");
-                        if (!p.empty() && loadProject(p, &S.project)) { runSolve(app); app.closeWelcome(); }
+                        if (!p.empty() && loadProject(p, &state.project)) { runSolve(app); app.closeWelcome(); }
                     }
                     if (ui::button("从空白开始", true)) app.closeWelcome();
                 });
 
-    app.transport(U.tl);
+    app.transport(uiState.tl);
 
     // ---- 命令行快启：app --open data/example.json --solve ----
     if (app.wantsSolve()) { runSolve(app); app.closeWelcome(); }

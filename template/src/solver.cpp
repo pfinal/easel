@@ -58,7 +58,7 @@ struct State {
     Params             params;
     std::vector<Frame> history;
 };
-State S;
+State state;
 
 // ============================================================================
 //  2. 算法
@@ -162,27 +162,27 @@ int main(int argc, char** argv) {
     std::string casePath = cli::args().str("case");
     if (!casePath.empty()) {
         json st = debug::importCase(casePath);
-        if (st.contains("project")) S.project = st["project"].get<Project>();
-        if (st.contains("params")) S.params = st["params"].get<Params>();
+        if (st.contains("project")) state.project = st["project"].get<Project>();
+        if (st.contains("params")) state.params = st["params"].get<Params>();
     } else {
         std::string path = cli::args().at(0, "data/example.json");
-        if (!loadProject(path, &S.project)) {
+        if (!loadProject(path, &state.project)) {
             EASEL_LOG("用内置示例代替");
-            S.project = makeExample();
+            state.project = makeExample();
         }
     }
 
-    if (cli::args().has("iters")) S.params.iterations = (int)cli::args().num("iters", 200);
+    if (cli::args().has("iters")) state.params.iterations = (int)cli::args().num("iters", 200);
 
     Stopwatch sw;
-    S.history = solve(S.project, S.params);
+    state.history = solve(state.project, state.params);
     std::cout << "用时 " << sw.ms() << " ms\n";
-    if (!S.history.empty()) std::cout << "最终目标值 " << S.history.back().cost << "\n";
+    if (!state.history.empty()) std::cout << "最终目标值 " << state.history.back().cost << "\n";
 
     // --dump-frame 5：把某一帧打出来，方便和 GUI 里看到的对比
     if (cli::args().has("dump-frame")) {
         int i = (int)cli::args().num("dump-frame", 0);
-        if (i >= 0 && i < (int)S.history.size()) std::cout << json(S.history[i]).dump(2) << "\n";
+        if (i >= 0 && i < (int)state.history.size()) std::cout << json(state.history[i]).dump(2) << "\n";
     }
     return 0;
 }

@@ -424,9 +424,9 @@ class Layer {
 记录绘制指令，每帧由 `Canvas::draw(layer)` 重放；用于拖尾/涂鸦/图章等
 "留下笔迹"的效果。作为 `App` 的成员变量持有，不要每帧新建。
 
-    struct S { Layer ink; } S;
-    void onFrame(double) { if (c.hovered()) S.ink.stroke(color, 2).line(prev, c.mouse()); }
-    void onDraw(Canvas& c) { c.draw(S.ink); }
+    struct State { Layer ink; } state;
+    void onFrame(double) { if (c.hovered()) state.ink.stroke(color, 2).line(prev, c.mouse()); }
+    void onDraw(Canvas& c) { c.draw(state.ink); }
 
 几条要点：
 
@@ -554,7 +554,7 @@ bool select(const char* label, int* v, const std::vector<std::string>& items);
 ```
 下拉框（N 选一）。`*v` 是选中项的下标，返回值同 `slider`：`true` 表示这一帧选项变了。
 ```cpp
-if (ui::select("算法", &S.algo, {"冒泡排序", "选择排序"})) sortAll();
+if (ui::select("算法", &state.algo, {"冒泡排序", "选择排序"})) sortAll();
 ```
 选项数量固定用 `initializer_list` 这版最短；选项是运行时算出来的（文件名列表等）用 `vector<string>` 这版。
 
@@ -568,14 +568,14 @@ bool inputCommit(const char* label, std::string* v);
 `input` 只要这一帧内容变了（敲一个字符、删一个字符……）就返回 `true`，跟 `slider` 拖动
 中每帧都 `true` 是一个道理，适合「打字的时候画面就跟着变」：
 ```cpp
-if (ui::input("要显示的文字", &S.text)) { /* 文字随打随变，通常什么都不用做 */ }
+if (ui::input("要显示的文字", &state.text)) { /* 文字随打随变，通常什么都不用做 */ }
 ```
 要是这行字只是用来触发一次性的动作（重新生成、重新计算），每敲一个字符都触发一遍
 既没意义又浪费，这时候用 `inputCommit`——和 `sliderCommit` 对 `slider` 的关系一样，
 只在敲完回车或失焦离开那一刻返回 `true`，其余帧都是 `false`：
 ```cpp
-if (ui::inputCommit("种子", &S.seedText))
-    S.mon = makeMonster((unsigned)std::strtoul(S.seedText.c_str(), nullptr, 10));
+if (ui::inputCommit("种子", &state.seedText))
+    state.mon = makeMonster((unsigned)std::strtoul(state.seedText.c_str(), nullptr, 10));
 ```
 
 <a id="ui-stat-chart"></a>
@@ -1129,27 +1129,27 @@ Vec2 toBufferPx(Canvas& mainCanvas, const Vec2& world) {
 struct State {
     Graphics           flow;
     std::vector<Vec2>  pts;
-} S;
+} state;
 
 app.onStart([&]{
-    S.flow.create(1000, 700);
-    for (int i = 0; i < 4000; ++i) S.pts.push_back({rng().d(0, 1000), rng().d(0, 700)});
+    state.flow.create(1000, 700);
+    for (int i = 0; i < 4000; ++i) state.pts.push_back({rng().d(0, 1000), rng().d(0, 700)});
 });
 
 app.onFrame([&](double dt){
-    Canvas& c = S.flow.begin();
-    for (Vec2& p : S.pts) {
-        double a = noise(p.x * 0.004, p.y * 0.004, S.t * 0.06) * 2 * kTau;
+    Canvas& c = state.flow.begin();
+    for (Vec2& p : state.pts) {
+        double a = noise(p.x * 0.004, p.y * 0.004, state.t * 0.06) * 2 * kTau;
         Vec2   np = p + Vec2{std::cos(a), std::sin(a)} * 2.2;
         c.stroke(Color::hsv(a * 57.3, 0.6, 0.85, 0.5), 1.2).line(p, np);
         p = np;
     }
-    S.flow.end();
+    state.flow.end();
 });
 
 app.onDraw([&](Canvas& c){
     c.camera().fit(Rect(0, 0, 1000, 700));
-    c.image(S.flow.texture(), Rect(0, 0, 1000, 700));
+    c.image(state.flow.texture(), Rect(0, 0, 1000, 700));
 });
 ```
 

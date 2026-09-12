@@ -95,7 +95,11 @@ Easel 把 Scratch、Processing、openFrameworks 三种写法接到同一个库�
 一个 Easel 程序由一个 `App`、几个回调和一个 `main` 组成——一个文件就能写完
 （形状见 `template-hello/src/app.cpp`）。这是**立即模式**（immediate mode）：
 `onDraw` 里没有"创建一个圆形对象"这种东西，每帧从头把想画的东西再画一遍。
-状态存在全局 `struct State S;` 里——普通函数 + 全局状态，不强制学 OOP。
+状态存在全局 `struct State state;` 里——普通函数 + 全局状态，不强制学 OOP。
+
+名字按作品改更好读：做游戏叫 `game`，做模拟叫 `sim`。别叫 `world`——那个词在
+Easel 里指世界坐标（`toWorld`、`worldRect`、`textWorld`），重名会让人分不清
+`world.x` 是状态里的 x 还是坐标的 x。
 
 对应关系：Processing 隐藏了 `main`，只留 `setup/draw`；Easel 保留显式 `main`。
 
