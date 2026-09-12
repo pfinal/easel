@@ -64,7 +64,7 @@ seed(12345)       current_seed()          // 命令行 --seed 12345 也能改；
 ```cpp
 int main(int argc, char** argv) {
     easel::App app(argc, argv);
-    app.title("MySketch").size(1280, 800).theme(easel::Theme::Forest());
+    app.title("MySketch").size(800, 450).theme(easel::Theme::Forest());   // size 可以不写，默认就是 800x450
 
     app.onDraw ([&](easel::Canvas& c){ /* 每帧重画整张画布 */ });
     app.onPanel([&]{ /* 每帧重画右侧面板 */ });
@@ -236,11 +236,11 @@ beep.volume(0.3);  beep.pitch(1.5);  beep.play();
 
 ```cpp
 app.camera().fit(Rect::bounding(所有点));   // 一键装进画布
-app.camera().center({0,0});   app.camera().zoom(20);   app.camera().panZoom(false);
+app.camera().center({0,0});   app.camera().zoom(20);   app.camera().panZoom(true);  // 默认关
 app.camera().scaleBar(&project.unitScale, "米");      // 左下角比例尺（单位名随你写）
 ```
 
-滚轮缩放 · 中键（或空格 + 左键）拖拽平移。
+滚轮缩放 · 中键（或空格 + 左键）拖拽平移。默认关着，`panZoom(true)` 打开。
 
 ## Timeline（算完 + 回放）
 

@@ -17,7 +17,7 @@ Easel 的全部公开 API：签名、参数、返回值与关键行为约定。�
 ```cpp
 int main(int argc, char** argv) {
     easel::App app(argc, argv);
-    app.title("MySketch").size(1280, 800).theme(easel::Theme::Forest());
+    app.title("MySketch").size(800, 450).theme(easel::Theme::Forest());   // size 可以不写，默认就是 800x450
     app.onDraw([](easel::Canvas& c) { ... });
     app.onPanel([] { ... });
     return app.run();
@@ -152,12 +152,13 @@ void fit(const Rect& worldRect, double paddingPx = 0);    // 把该区域整个�
                                                             // 世界坐标包围盒量不到它们，严格贴合会切掉一截，这时传个像素留白
 void center(const Vec2& w);
 void zoom(double pixelsPerUnit);
-void panZoom(bool enabled);                                // 关闭滚轮缩放/拖拽平移
+void panZoom(bool enabled);                                // 滚轮缩放/拖拽平移，默认关
 void scaleBar(double* metersPerUnit, const char* unitName = "米");   // 传指针，改变量值比例尺即时更新
 ```
 
 `app.camera()` 获取当前实例；在 `onDraw` 里手边只有画布时，`c.camera()` 拿到的是同一个。
-默认交互：滚轮缩放（以鼠标为中心）、中键或空格+左键拖拽平移。
+滚轮缩放（以鼠标为中心）、中键或空格+左键拖拽平移，**默认关着**——多数作品有固定构图，
+滚一下就把画面缩没了。要浏览大世界的作品调 `panZoom(true)` 打开。
 
 ---
 

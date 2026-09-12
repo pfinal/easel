@@ -160,7 +160,9 @@ App* g_instance = nullptr;
 struct App::Impl {
     GLFWwindow* win = nullptr;
     std::string title = "Easel 应用";
-    int         w = 1280, h = 800;
+    // 默认 800x450（16:9）：窗口尺寸要乘显示器缩放才是真实像素，教室机器常见 125%~150%，
+    // 乘完还得放得下。1280x800 在 150% 下是 1920x1200，一台 1080p 的屏都装不下。
+    int         w = 800, h = 450;
     Theme       theme = Theme::Forest();
     bool        customBg = false;
     Color       bg;

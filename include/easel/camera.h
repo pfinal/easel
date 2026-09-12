@@ -10,7 +10,8 @@ class App;   // 只用来 friend，见下面 setViewport/handleInput
 
 // 相机把「世界坐标」（米、格子、随便什么单位）映射到画布上的像素。
 // 世界坐标的 y 轴向下（和屏幕一样），没有翻转。
-// 默认支持：滚轮缩放（以鼠标为中心）、中键 / 空格拖拽平移。
+// 滚轮缩放（以鼠标为中心）和中键 / 空格拖拽平移**默认关着**，要浏览大世界的
+// 作品自己 panZoom(true) 打开。
 class Camera {
 public:
     // ---- 学生会用到的 ----
@@ -23,6 +24,8 @@ public:
     Vec2   center() const { return target_; }
     void   zoom(double pixelsPerUnit);
     double zoom() const { return scale_; }
+    // 滚轮缩放 + 中键/空格拖拽平移。**默认关着**：作品多数有固定构图（游戏画面、
+    // 图案、网格），滚一下就把画面缩没了。要浏览大世界的作品自己打开它。
     void   panZoom(bool enabled) { panZoom_ = enabled; }
     bool   panZoom() const { return panZoom_; }
     // 显示比例尺。传指针：学生改了变量，比例尺立刻跟着变。
@@ -54,7 +57,7 @@ private:
     Vec2        target_{0, 0};      // 视口中心对应的世界坐标
     double      scale_ = 1.0;       // 一个世界单位 = 多少像素
     Rect        viewport_{0, 0, 1, 1};
-    bool        panZoom_ = true;
+    bool        panZoom_ = false;
     double*     metersPerUnit_ = nullptr;
     const char* unitName_ = "米";
     // 窗口还没布局出来的时候（比如 run() 之前就调了 fit），先把请求记下来，

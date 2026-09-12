@@ -33,11 +33,11 @@ int main(int argc, char** argv) {
     // 窗口和显卡都准备好之后调一次
     app.onStart([&app] {
         solve();
-        // 把算出来的东西一键装进画布（之后滚轮缩放、中键平移都是白送的）
+        // 把算出来的东西一键装进画布
         app.camera().fit(Rect::bounding(state.points), 80);
     });
 
-    // 每帧重画一次整张画布。坐标是「世界坐标」，滚轮缩放、中键平移都是白送的。
+    // 每帧重画一次整张画布。坐标是「世界坐标」，跟窗口像素无关。
     app.onDraw([&](Canvas& c) {
         const Theme& th = app.theme();
 

@@ -79,7 +79,7 @@ int main(int argc, char** argv) {
             for (const Frame& x : state.tl.frames()) ys.push_back((double)x.cmp);
             ui::chart("##cmp", ys, "比较次数");
         }
-        ui::help("空格 + 左键拖拽平移，滚轮缩放，F12 打开调试台。");
+        ui::help("F12 打开调试台，逐帧回放算法过程。");
         app.status("Easel 排序示例 · 一共 80 行");
     });
 
