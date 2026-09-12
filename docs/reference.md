@@ -916,8 +916,9 @@ App 内置的（构造 `App` 时自动解析）：
 | `easel --new <目录> --name <名字> [--full \| --example <名字>] [--tests]` | 从模板建一个新工程 | `easel --new ~/projects --name Demo --full` |
 | `easel --build <工程目录> [--json]` | 只配置 + 编译 app 目标，不运行 | `easel --build ~/projects/Demo` |
 | `easel --run <工程目录> [--args "..."] [--json]` | 编译后运行作品，等它退出；`--args` 把参数转给作品 | `easel --run ~/projects/Demo --args "--frames 30"` |
-| `easel --package <工程目录> [--json]` | Release 构建 + 收进 `dist/<名字>-release/` | `easel --package ~/projects/Demo` |
-| `easel --export <工程目录> --out <目录> [--json]` | 导出一个能独立编译的完整工程 | `easel --export ~/projects/Demo --out ~/out` |
+| `easel --package <工程目录> [--json]` | 导出应用程序：Release 构建 + 收进 `dist/<名字>-release/` | `easel --package ~/projects/Demo` |
+| `easel --export <工程目录> --out <目录> [--json]` | 导出工程：一个能独立编译的完整工程 | `easel --export ~/projects/Demo --out ~/out` |
+| `easel --clean <工程目录> [--json]` | 清理：删掉这个工程的构建产物（`.easel/build`、`.easel/build-release`）。**不动 `dist/`，不动你的代码**；目录本来就不在也算成功，可以连着跑两次 | `easel --clean ~/projects/Demo` |
 | `easel -h` / `easel --help` | 打印工作台的完整用法 | `easel --help` |
 | `easel -V` / `easel --version` | 打印版本、提交、abi、编译器 | `easel --version` |
 

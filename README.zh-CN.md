@@ -12,7 +12,7 @@
 
 **只算一次，逐帧回放。** `Timeline<T>` 保存整段计算好的序列，`App::transport()` 附加一条回放条：播放、暂停、单步、拖动进度、调整速度。
 
-**项目是自包含的。** "Export source" 会生成一个包含所有依赖源码的目录；在一台什么都没装、也没有网络的机器上，一条 `cmake` 命令就能构建出完整的界面程序。
+**项目是自包含的。** 「导出工程」会生成一个包含所有依赖源码的目录；在一台什么都没装、也没有网络的机器上，一条 `cmake` 命令就能构建出完整的界面程序。
 
 ## 你能得到什么
 
@@ -62,7 +62,7 @@ git clone https://github.com/pfinal/easel.git && cd easel
 cmake --preset default && cmake --build --preset default
 ```
 
-`./build/default/easel` 会打开 Workbench："New Project" -> "Build & Run"。这需要 Xcode 命令行工具（`xcode-select --install`）和 CMake。
+`./build/default/easel` 会打开工作台：「文件 → 新建工程…」，然后点「运行」。这需要 Xcode 命令行工具（`xcode-select --install`）和 CMake。
 
 发布包：下载 zip，双击 `Easel.app`；需要 Xcode 命令行工具和 CMake。
 
@@ -76,9 +76,11 @@ cmake --preset default && cmake --build --preset default
 
 ## Workbench
 
-New Project / Build & Run / Stop / Build exe / Export source。项目以独立进程运行；点击错误行会跳转到源码中对应的位置。空白工程只有一个文件 —— `src/app.cpp` —— 构建脚本放在 `.easel/` 里，单头库不拷贝，直接指到 Easel 自己的 `dist/`。「骨架」下拉还可以选算法骨架（数据文件、逐帧回放、收敛曲线）或者任意一个自带示例。作品名只能用英文（编译器对中文路径支持不好）。
+主界面从上到下就是「哪个工程 → 点哪里 → 怎么样了 → 凭什么」：工程栏、**运行 / 停止**两个按钮、一行结论、下面是输出区。一次用一遍的操作（新建工程、打开工程、导出应用程序、导出工程、清理、设置）都在菜单栏里。项目以独立进程运行；点击错误行（或那行结论）会跳转到源码中对应的位置。空白工程只有一个文件 —— `src/app.cpp` —— 构建脚本放在 `.easel/` 里，单头库不拷贝，直接指到 Easel 自己的 `dist/`。「骨架」下拉还可以选算法骨架（数据文件、逐帧回放、收敛曲线）或者任意一个自带示例。作品名只能用英文（编译器对中文路径支持不好）。
 
-每个按钮都有命令行等价物（`--build` / `--run` / `--package` / `--export`，还有无头的 `--new`）；加 `--json` 拿到机器可读的结果，例如 `easel --build ~/projects/Demo --json`。
+输出区可以收起来（设置 → 紧凑模式），窗口缩成一条压在编辑器上面（设置 → 始终置顶），编译失败时它会自己长高把错误露出来。模式、置顶、窗口大小位置都记在 `workbench.json` 里，下次还原。
+
+每个操作都有命令行等价物（`--build` / `--run` / `--package` / `--export` / `--clean`，还有无头的 `--new`）；加 `--json` 拿到机器可读的结果，例如 `easel --build ~/projects/Demo --json`。界面上的每个词、每个状态的长相都写死在 [`docs/ui-design.md`](docs/ui-design.md) 里。
 
 ### `easel` 命令速查表
 
@@ -90,12 +92,13 @@ New Project / Build & Run / Stop / Build exe / Export source。项目以独立�
 | 打开工作台窗口 | `easel`（或 `easel <工程目录>`，打开时直接带上这个工程） |
 | 新建工程 | `easel --new <父目录> --name <作品名> [--full] [--example <示例名>] [--tests]` |
 | 编译 | `easel --build <工程目录>` |
-| 编译并运行 | `easel --run <工程目录> [--args "..."]` |
-| 生成 exe（打包给别人） | `easel --package <工程目录>` |
-| 导出自足源码 | `easel --export <工程目录> [--out <目录>]` |
+| 运行（编译并跑起来） | `easel --run <工程目录> [--args "..."]` |
+| 导出应用程序（发给别人双击运行） | `easel --package <工程目录>` |
+| 导出工程（自足，能独立编译） | `easel --export <工程目录> [--out <目录>]` |
+| 清理（删掉构建产物，不动 `dist/`） | `easel --clean <工程目录>` |
 | 自检（后端 / GPU / 字体 / 编译器） | `easel --doctor [--verbose]` |
 
-`--build` / `--run` / `--package` / `--export` 后面都能加 `--json`，拿到机器可读的结果。
+`--build` / `--run` / `--package` / `--export` / `--clean` 后面都能加 `--json`，拿到机器可读的结果。
 macOS 上可执行文件在 `Easel.app/Contents/easel`；Linux 发布包里是 `bin/easel`——具体见上面各平台的说明。
 `easel --help` / `easel --version` 也能用；认不出的参数会直接报错退出，不会开窗口。
 
@@ -131,7 +134,7 @@ ctest --test-dir build/default --output-on-failure -C RelWithDebInfo  # -C 是�
 |---|---|
 | `include/` | 公开头文件：`core.h`（无 GUI，零链接依赖）、`app.h`、`canvas.h`、`camera.h`、`timeline.h`、`ui.h`、`audio.h`、`theme.h`、`file.h` |
 | `src/` | 库的实现 |
-| `workbench/` | Workbench：新建项目 / 构建 / 运行 / 停止 / 构建 exe / 导出源码 |
+| `workbench/` | 工作台：新建工程 / 运行 / 停止 / 导出应用程序 / 导出工程 / 清理（界面规范见 `docs/ui-design.md`） |
 | `template/` | 算法骨架起始项目（数据文件、回放、收敛曲线） |
 | `template-hello/` | 空白项目模板（一个文件：`src/app.cpp`） |
 | `examples/` | `hello`、`sort`、`creative` 示例 |

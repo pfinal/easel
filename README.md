@@ -12,7 +12,7 @@
 
 **Compute once, replay frame by frame.** `Timeline<T>` holds the entire computed sequence, and `App::transport()` attaches a playback bar: play, pause, step, drag the progress, adjust speed.
 
-**The project is self-contained.** "Export source" generates a directory with the source of all dependencies; on a machine with nothing installed and no network access, a single `cmake` command builds the whole interface program.
+**The project is self-contained.** "Export project" generates a directory with the source of all dependencies; on a machine with nothing installed and no network access, a single `cmake` command builds the whole interface program.
 
 ## What you get
 
@@ -63,7 +63,7 @@ git clone https://github.com/pfinal/easel.git && cd easel
 cmake --preset default && cmake --build --preset default
 ```
 
-`./build/default/easel` opens the Workbench: "New Project" -> "Build & Run". This requires the Xcode command line tools (`xcode-select --install`) and CMake.
+`./build/default/easel` opens the Workbench: "File -> New Project...", then hit "Run". This requires the Xcode command line tools (`xcode-select --install`) and CMake.
 
 Release package: download the zip, double-click `Easel.app`. Requires the Xcode command line tools and CMake.
 
@@ -77,9 +77,11 @@ Release package: download the tar.gz (x86_64), extract it, and run `./bin/easel`
 
 ## Workbench
 
-New Project / Build & Run / Stop / Build exe / Export source. A project runs as a separate process; clicking an error line jumps to the corresponding location in the source. A blank project has only one file -- `src/app.cpp` -- the build scripts live in `.easel/` and the single-header library isn't copied at all, it's pointed straight at Easel's own `dist/`. The "Skeleton" dropdown can also start from the algorithm skeleton (data file, frame-by-frame replay, convergence chart) or from any bundled example. Project names must be ASCII (compilers don't handle non-ASCII paths well).
+Top to bottom the window answers "which project -> where to click -> how did it go -> what's the evidence": a project bar, the **Run / Stop** buttons, a one-line verdict, and the output pane. Everything you use once per project (New Project, Open Project, Export Application, Export Project, Clean, Settings) lives in the menu bar. A project runs as a separate process; clicking an error line -- or the verdict line -- jumps to the corresponding location in the source. A blank project has only one file -- `src/app.cpp` -- the build scripts live in `.easel/` and the single-header library isn't copied at all, it's pointed straight at Easel's own `dist/`. The "Skeleton" dropdown can also start from the algorithm skeleton (data file, frame-by-frame replay, convergence chart) or from any bundled example. Project names must be ASCII (compilers don't handle non-ASCII paths well).
 
-Every button has a command-line equivalent (`--build` / `--run` / `--package` / `--export`, alongside the headless `--new`); add `--json` to get a machine-readable result instead of plain text, e.g. `easel --build ~/projects/Demo --json`.
+The output pane can be collapsed (Settings -> Compact mode) and the window pinned over your editor (Settings -> Always on top); on a failed build it grows just enough to show the errors. Mode, pinning and window geometry are remembered in `workbench.json`.
+
+Every action has a command-line equivalent (`--build` / `--run` / `--package` / `--export` / `--clean`, alongside the headless `--new`); add `--json` to get a machine-readable result instead of plain text, e.g. `easel --build ~/projects/Demo --json`. Every word and every state in the UI is pinned down in [`docs/ui-design.md`](docs/ui-design.md) (Chinese).
 
 ### `easel` command cheat sheet
 
@@ -90,12 +92,13 @@ This is the Workbench binary itself (`easel` / `Easel.app` / `easel.bat`), not t
 | Open the Workbench window | `easel` (or `easel <project-dir>` to open it with a project already loaded) |
 | New project | `easel --new <parent-dir> --name <ProjectName> [--full] [--example <name>] [--tests]` |
 | Build | `easel --build <project-dir>` |
-| Build & run | `easel --run <project-dir> [--args "..."]` |
-| Build exe (package for handing out) | `easel --package <project-dir>` |
-| Export self-contained source | `easel --export <project-dir> [--out <dir>]` |
+| Run (build and launch) | `easel --run <project-dir> [--args "..."]` |
+| Export application (hand it to someone) | `easel --package <project-dir>` |
+| Export project (self-contained sources) | `easel --export <project-dir> [--out <dir>]` |
+| Clean (delete build artifacts, keeps `dist/`) | `easel --clean <project-dir>` |
 | Self-check (backend / GPU / fonts / compiler) | `easel --doctor [--verbose]` |
 
-Add `--json` to `--build` / `--run` / `--package` / `--export` for a machine-readable result. On macOS the binary is at `Easel.app/Contents/easel`; on Linux it's `bin/easel` inside the release package -- see the platform notes above. `easel --help` / `easel --version` also work; an argument the Workbench doesn't recognize makes it exit with an error instead of opening a window.
+Add `--json` to `--build` / `--run` / `--package` / `--export` / `--clean` for a machine-readable result. On macOS the binary is at `Easel.app/Contents/easel`; on Linux it's `bin/easel` inside the release package -- see the platform notes above. `easel --help` / `easel --version` also work; an argument the Workbench doesn't recognize makes it exit with an error instead of opening a window.
 
 ![Workbench](docs/screenshot-workbench.png)
 
@@ -129,7 +132,7 @@ ctest --test-dir build/default --output-on-failure -C RelWithDebInfo  # -C requi
 |---|---|
 | `include/` | public headers: `core.h` (no GUI, zero link dependencies), `app.h`, `canvas.h`, `camera.h`, `timeline.h`, `ui.h`, `audio.h`, `theme.h`, `file.h` |
 | `src/` | library implementation |
-| `workbench/` | Workbench: new project / build / run / stop / build exe / export source |
+| `workbench/` | Workbench: new project / run / stop / export application / export project / clean (UI spec: `docs/ui-design.md`) |
 | `template/` | algorithm-skeleton starter project (data file, playback, convergence chart) |
 | `template-hello/` | blank project template (one file: `src/app.cpp`) |
 | `examples/` | the `hello`, `sort`, and `creative` examples |

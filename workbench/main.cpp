@@ -2,16 +2,28 @@
 //
 // 分工照抄 Processing，编辑器换成 VS Code：
 //   学生在 VS Code 里写自己的两个文件（界面 src/app.cpp、逻辑 src/solver.cpp）；
-//   工作台负责其余全部 —— 新建工程、编译、运行、停止、看报错、生成 exe、导出源码。
+//   工作台负责其余全部 —— 新建工程、运行、停止、看报错、导出应用程序、导出工程、清理。
 //   库、依赖、构建脚本由我们管，学生的 VS Code 里根本看不见它们。
 //
 // 关键一点：**作品是子进程**。所以「重新编译」永远不会撞上「正在运行的自己」——
 // 这是 D-27 当初绕不过去的那个死结，换个进程模型就没了。
+//
+// 界面的每一条规则（用词、状态机、层级、两种模式、视觉档位）都写在 docs/ui-design.md 里，
+// 这里只负责照着实现。**改界面之前先读那份文档**，尤其是第 0 节：内置字体子集里没有
+// ✔ ✖ ▶ ■ ☐ 这类符号，界面上一个都不许出现（会变成豆腐块），状态靠汉字 + 颜色表达，
+// 三角箭头用 ImGui 自己画的 ArrowButton。
 #include <easel/easel.h>
 
 #include "internal.h"
 
+// 窗口几何（还原位置、紧凑模式改大小、始终置顶）要直接问 glfw。workbench 经
+// easel_imgui 间接链接 glfw，头文件拿得到。App 现在不暴露窗口句柄，只能用
+// glfwGetCurrentContext()（OpenGL 后端下就是主窗口；DX11 后端返回 nullptr，
+// 那时这几个功能整体降级，见 docs/ui-design.md 第 4.5 节和第 7 节第 1 条）。
+#include <GLFW/glfw3.h>
+
 #include <cctype>
+#include <climits>
 #include <cstdio>
 #include <cstring>
 #include <iostream>
@@ -22,6 +34,54 @@ using namespace easel::internal;
 namespace {
 
 enum Stage { Idle, Configuring, Building, Running, Packing };
+
+// ------------------------------------------------------------------ 视觉档位
+// docs/ui-design.md 第 5 节的那张表，一一对应。界面里的每个尺寸都只能来自这里，
+// 用的时候乘 dpi（draw() 收到的那个参数）。**不许在别处写裸数字。**
+namespace M {
+// 间距四档
+constexpr float kGapTight = 6.f;     // 同一组里贴着的两个元素
+constexpr float kGap = 10.f;         // 一般元素间距
+constexpr float kPad = 14.f;         // 段内左右留白
+constexpr float kGapSection = 20.f;  // 两个按钮之间、段内上下呼吸
+// 段高
+constexpr float kProjectH = 48.f;    // 工程栏
+constexpr float kActionH = 76.f;     // 主操作区
+constexpr float kSummaryH = 34.f;    // 摘要行（单行，永不长高）
+constexpr float kBtnH = 44.f;        // 按钮高度，全界面统一
+constexpr float kBtnRunW = 168.f;    // 运行
+constexpr float kBtnStopW = 112.f;   // 停止
+// 字号（乘 ImGui::GetStyle().FontSizeBase，只有这四档）
+constexpr float kT1 = 1.25f;         // 工程名
+constexpr float kT2 = 1.00f;         // 正文
+constexpr float kT2b = 1.15f;        // 只给主按钮「运行」
+constexpr float kT3 = 0.92f;         // 路径、次要说明、日志（等宽）
+// 窗口
+constexpr int kWinW = 960, kWinH = 600;            // 完整模式默认
+constexpr int kCompactW = 520;                     // 紧凑模式宽度（高度按内容算）
+constexpr int kMinFullW = 760, kMinFullH = 420;    // 最小尺寸
+constexpr int kMinCompactW = 440, kMinCompactH = 200;
+constexpr int kGrowMaxH = 420;                     // 紧凑模式失败时自动长高的上限
+constexpr int kGrowLines = 6;                      // 最多展开几行错误
+// 还原位置时那条「标题栏带」的尺寸要求（见 docs/ui-design.md 4.5）
+constexpr int kTitleBandH = 32, kTitleBandMinW = 120, kTitleBandMinH = 24;
+// 列表长度
+constexpr int kRecentMax = 8;        // 「最近打开」记几条
+constexpr int kRecentInEmpty = 3;    // 空状态里直接露几条
+}  // namespace M
+
+// 上一次操作的结果：状态机的第三个输入（另两个是「有没有工程」和 stage）。
+enum Result { ResNone, ResOk, ResFail };
+
+// 六个状态（docs/ui-design.md 第 2 节）。界面不许有第七种长相。
+enum UiState {
+    StEmpty,    // A 没打开任何工程
+    StFresh,    // B 有工程，空闲，这次会话还没跑过
+    StOk,       // C 有工程，空闲，上次成功
+    StFail,     // D 有工程，空闲，上次失败
+    StBusy,     // E 配置 / 编译 / 导出中
+    StRunning   // F 作品运行中
+};
 
 struct OutLine {
     std::string text;
@@ -44,11 +104,49 @@ struct WB {
     std::string          status = "先新建一个工程，或者打开一个已有的";
     char                 runArgs[192] = {0};
 
-    // 「工程说清楚自己在做什么」：每次操作（编译并运行 / 生成 exe / 导出源码）从
+    // ---- 摘要行（docs/ui-design.md 第 2 节）：日志是证据，摘要是给人读的结论 ----
+    int         lastResult = ResNone;
+    std::string sumText;                 // 空 = 用当前状态的默认文案
+    int         sumKind = 0;             // 0 次要灰 1 红 2 绿 3 黄
+    std::string sumFile;                 // 非空 = 摘要行可点，跳到这个位置
+    int         sumLine = 0, sumCol = 0;
+    std::string busyText;                // 忙碌时摘要行的前缀（「编译中」「运行中 …」）
+    double      busyFrom = 0;            // 忙碌开始的时刻（ImGui::GetTime()）
+    std::string libNote;                 // 「用现成的库」/「从源码编界面库」，configure 跑完才知道
+    std::string buildSummary;            // 上一次编译成功的那句结论，作品退出时要接着用
+
+    // ---- 日志区 ----
+    bool verboseUI = false;   // 「详细输出」勾选，同步 internal::verbose()
+    bool stickBottom = true;  // 用户手动往上滚过之后就别再抢滚动条
+    int  scrollTo = -1;       // 一次性：把视口滚到这一行（失败时指向第一条错误）
+    int  firstError = -1;     // 第一条错误在 out 里的下标，-1 = 没有
+
+    // ---- 两种模式 / 窗口几何（docs/ui-design.md 第 4 节）----
+    bool compact = false;       // 紧凑模式：日志区收起
+    bool alwaysOnTop = false;   // 始终置顶
+    int  fullW = M::kWinW, fullH = M::kWinH;   // 完整模式的尺寸（逻辑像素，存盘的就是它）
+    int  winX = INT_MIN, winY = INT_MIN;       // 上次的位置（屏幕坐标原值，INT_MIN = 没存过）
+    int  fitFrames = 0;         // >0：紧凑模式下这几帧里把窗口高度贴合内容（一次性）
+    int  lastSetH = 0;          // 我们上次设过的窗口高度，用来判断「用户自己拖过」
+    bool grown = false;         // 紧凑模式因为失败而长高着
+
+    // ---- 过渡意图：停掉正在跑的作品之后接着重跑（不是第七个状态）----
+    bool pendingRun = false;
+    // 导出工程是同步阻塞的，先画一帧「导出工程中」再真干活
+    bool pendingExportProject = false;
+
+    // 对话框：菜单项里只置旗标，菜单收起来之后再 OpenPopup
+    bool openNewProject = false, openExportApp = false, openExportProject = false;
+    bool openRunArgs = false, openAbout = false;
+    char exportOutDir[512] = {0};
+
+    // 「清理」菜单项的 tooltip 要说清删掉多大：文件菜单打开时算一次，别每帧去扫磁盘
+    long long cleanBytes = -1;   // -1 = 还没算过
+
+    // 「工程说清楚自己在做什么」：每次操作（运行 / 导出应用程序 / 导出工程 / 清理）从
     // 0.0s 重新起表，输出区里我们自己打的每一行都带 [ x.xs] 前缀；编译器/cmake/
     // 作品自己的原样输出不加前缀。opClock 在 beginLog() 里重置。
     Stopwatch            opClock;
-    bool                 verboseUI = false;   // 输出区上方的「详细」勾选，同步 internal::verbose()
 
     // 新建工程对话框
     char                     newName[128] = "MySketch";
@@ -58,7 +156,7 @@ struct WB {
     int                      newSkeleton = 0;
     std::vector<std::string> exampleNames;
 
-    bool wantPackage = false;   // 「生成 exe」要多编一次 Release，分两步走
+    bool wantPackage = false;   // 「导出应用程序」要多编一次 Release，分两步走
 };
 
 WB& wb() {
@@ -206,6 +304,9 @@ bool buildConfigured(const std::string& build) {
 
 std::string configPath() { return joinPath(exeDir(), "workbench.json"); }
 
+// workbench.json：最近工程 + 窗口几何 + 「详细输出」开关（docs/ui-design.md 4.4）。
+// 缺字段一律用默认值，解析失败整块丢掉——配置文件坏了不该让工作台打不开。
+// 运行参数**故意不存**：它是临时的，存下来会变成「下次打开莫名带着参数跑」这种看不见的状态。
 void loadConfig() {
     WB&  w = wb();
     json j = json::parse(fs::readText(configPath()), nullptr, false);
@@ -214,12 +315,35 @@ void loadConfig() {
         for (const json& x : j["recent"])
             if (x.is_string() && existsU8(x.get<std::string>())) w.recent.push_back(x);
     if (!w.recent.empty()) w.projectDir = w.recent.front();
+    if (j.contains("verbose") && j["verbose"].is_boolean()) w.verboseUI = j["verbose"];
+    if (j.contains("window") && j["window"].is_object()) {
+        const json& g = j["window"];
+        if (g.contains("w") && g["w"].is_number_integer()) w.fullW = g["w"];
+        if (g.contains("h") && g["h"].is_number_integer()) w.fullH = g["h"];
+        if (g.contains("x") && g["x"].is_number_integer()) w.winX = g["x"];
+        if (g.contains("y") && g["y"].is_number_integer()) w.winY = g["y"];
+        if (g.contains("compact") && g["compact"].is_boolean()) w.compact = g["compact"];
+        if (g.contains("alwaysOnTop") && g["alwaysOnTop"].is_boolean()) w.alwaysOnTop = g["alwaysOnTop"];
+        // 尺寸只做下限保护。上限是 src/backend.cpp 的 computeWindowGeometry() 的活
+        // （它会等比夹进显示器可用区域），这里再夹一遍就是第二份实现。
+        if (w.fullW < M::kMinFullW) w.fullW = M::kMinFullW;
+        if (w.fullH < M::kMinFullH) w.fullH = M::kMinFullH;
+    }
 }
 
 void saveConfig() {
     WB&  w = wb();
     json j;
     j["recent"] = w.recent;
+    j["verbose"] = w.verboseUI;
+    json g;
+    g["w"] = w.fullW;
+    g["h"] = w.fullH;
+    if (w.winX != INT_MIN) g["x"] = w.winX;
+    if (w.winY != INT_MIN) g["y"] = w.winY;
+    g["compact"] = w.compact;
+    g["alwaysOnTop"] = w.alwaysOnTop;
+    j["window"] = g;
     fs::writeText(configPath(), j.dump(2));
 }
 
@@ -229,9 +353,14 @@ void useProject(const std::string& dir) {
     w.projectDir = dir;
     w.recent.erase(std::remove(w.recent.begin(), w.recent.end(), dir), w.recent.end());
     w.recent.insert(w.recent.begin(), dir);
-    if (w.recent.size() > 8) w.recent.resize(8);
+    if (w.recent.size() > (size_t)M::kRecentMax) w.recent.resize(M::kRecentMax);
     saveConfig();
     w.status = "工程：" + baseName(dir);
+    // 换工程 = 上一次编译的结论不再成立（那是另一个工程的事）
+    w.lastResult = ResNone;
+    w.sumText.clear();
+    w.sumFile.clear();
+    w.cleanBytes = -1;
 }
 
 void addOut(const std::string& text, int kind, const std::string& file = {}, int line = 0,
@@ -274,6 +403,12 @@ void beginLog() {
     w.out.clear();
     w.errors = w.warnings = 0;
     w.opClock.reset();
+    w.stickBottom = true;   // 新的一次操作：滚动条重新跟着输出走
+    w.scrollTo = -1;
+    w.libNote.clear();      // 「用现成的库 / 从源码编」要等这次的 configure 跑完才知道
+    w.cleanBytes = -1;      // 构建产物大小变了，菜单里的数字下次打开时重算
+    w.firstError = -1;
+    w.sumFile.clear();
     std::string b = internal::banner(w.projectDir);
     size_t start = 0;
     while (start < b.size()) {
@@ -327,10 +462,13 @@ void hintIfPrebuiltMismatch(const std::string& cmakeRaw) {
 // 那儿的预编译多数时候是能用的，正常应该几秒钟就编完，说「几分钟」白吓人。
 // FetchContent 联网拉那条没有这两句 STATUS 可认，认不出来就不瞎猜，什么都不说。
 void hintBuildSpeed(const std::string& cmakeRaw) {
-    if (cmakeRaw.find("用预编译的 Easel") != std::string::npos)
+    if (cmakeRaw.find("用预编译的 Easel") != std::string::npos) {
         sayTS("用的是预编译库，这次编译只要几秒。");
-    else if (cmakeRaw.find("用本地的 Easel 源码") != std::string::npos)
+        wb().libNote = "用现成的库";
+    } else if (cmakeRaw.find("用本地的 Easel 源码") != std::string::npos) {
         sayTS("这次要把界面库从源码编出来，得几分钟；以后就只编你改的那几行，会快很多。");
+        wb().libNote = "从源码编界面库";
+    }
 }
 
 // Linux 上最常见的 configure 失败根因：图形相关的 -dev 包没装。发布包只保证「解压
@@ -413,6 +551,197 @@ void feed(const std::string& chunk) {
     w.pending.erase(0, start);
 }
 
+// ------------------------------------------------------------------ 摘要行
+// 「2.5 秒」这种人话时长。摘要行给人读，不用 formatStamp() 那种 [ 2.5s] 的日志格式。
+std::string secText(double seconds) {
+    char buf[32];
+    if (seconds < 100)
+        std::snprintf(buf, sizeof buf, "%.1f 秒", seconds);
+    else
+        std::snprintf(buf, sizeof buf, "%d 秒", (int)(seconds + 0.5));
+    return buf;
+}
+
+// 日志是证据，摘要行是给人读的结论（docs/ui-design.md 第 2 节、4.1）。两者不互相替代：
+// 这里只管「一句话说清刚才怎么样了」，原始输出一行不少地留在日志里。
+void setSummary(const std::string& text, int kind) {
+    WB& w = wb();
+    w.sumText = text;
+    w.sumKind = kind;
+    w.sumFile.clear();
+    w.sumLine = w.sumCol = 0;
+}
+
+// 失败时的摘要行：要说人话，而且能点（点了跳到第一条错误，跟点日志里那一行等价）。
+void setSummaryError(const std::string& text, const std::string& file, int line, int col) {
+    WB& w = wb();
+    setSummary(text, 1);
+    w.sumFile = file;
+    w.sumLine = line;
+    w.sumCol = col;
+}
+
+// 忙碌（配置 / 编译 / 导出 / 运行）时摘要行显示「<前缀> 3.1 秒」，秒数每帧自己长。
+void setBusy(const std::string& prefix) {
+    WB& w = wb();
+    w.busyText = prefix;
+    w.busyFrom = ImGui::GetTime();
+    w.sumFile.clear();
+}
+
+// 日志里第一条错误（失败时摘要行要指向它，紧凑模式要展开它）。
+void findFirstError() {
+    WB& w = wb();
+    w.firstError = -1;
+    for (size_t i = 0; i < w.out.size(); ++i)
+        if (w.out[i].kind == 1 && !w.out[i].file.empty() && w.out[i].line > 0) {
+            w.firstError = (int)i;
+            return;
+        }
+    // 没有带位置的错误行，退一步指向任何一条错误行（至少能把视口滚到出事的地方）
+    for (size_t i = 0; i < w.out.size(); ++i)
+        if (w.out[i].kind == 1) {
+            w.firstError = (int)i;
+            return;
+        }
+}
+
+// 失败收尾统一走这里：摘要行说人话 + 把视口滚到第一条错误（不是底部——底部只是重复）。
+void failed(const std::string& text) {
+    WB& w = wb();
+    findFirstError();
+    if (w.firstError >= 0) {
+        const OutLine& o = w.out[(size_t)w.firstError];
+        setSummaryError(text + (o.file.empty() ? "" : " · 点这里看第一个"), o.file, o.line, o.col);
+        w.scrollTo = w.firstError;
+    } else {
+        setSummary(text, 1);
+    }
+    w.lastResult = ResFail;
+    w.busyText.clear();
+    w.stickBottom = false;   // 视口要停在第一条错误那儿，不是底部
+}
+
+// 跳到代码里某一行（错误行、摘要行都用它）。没装 VS Code 就把位置复制到剪贴板。
+void jumpTo(const std::string& file, int line, int col) {
+    if (file.empty() || line <= 0) return;
+    if (openInEditor(file, line, col)) return;
+    std::string loc = file + ":" + std::to_string(line);
+    ImGui::SetClipboardText(loc.c_str());
+    addOut("没找到 VS Code，位置已复制：" + loc, 2);
+}
+
+// ------------------------------------------------------------------ 清理
+// 「清理」删的是可以重新生成的构建产物，**只有这两个目录**，路径一律问 buildDir() /
+// releaseDir()（新式工程在 .easel/ 下，老式工程在 build/ 下，两套布局都要认）。
+// 绝对不删 dist/ —— 那是「导出应用程序」「导出工程」的产出，是交付物不是垃圾，而且不保证
+// 还能原样重新生成（当时的 Easel 版本、assets 都可能变了）。Xcode 的 Clean 也不动你的归档。
+// 也不删 .easel/last-build.log（上一次失败的现场证据）和学生自己的任何文件。
+// 详见 docs/ui-design.md 6.3。GUI 和无头 --clean 共用这一份实现。
+long long dirSizeU8(const std::string& dir) {
+    long long total = 0;
+    for (const DirEntry& e : listDirU8(dir)) {
+        std::string p = joinPath(dir, e.name);
+        if (e.isDir) {
+            total += dirSizeU8(p);
+        } else {
+            long long sz = 0;
+            if (fileStamp(p, nullptr, &sz)) total += sz;
+        }
+    }
+    return total;
+}
+
+std::vector<std::string> cleanTargets(const std::string& proj) {
+    return {buildDir(proj), releaseDir(proj)};
+}
+
+// 两个构建目录加起来多大（不存在就算 0）。菜单项的 tooltip 和无头命令都用它。
+long long cleanableBytes(const std::string& proj) {
+    long long total = 0;
+    for (const std::string& d : cleanTargets(proj))
+        if (isDirU8(d)) total += dirSizeU8(d);
+    return total;
+}
+
+struct CleanReport {
+    bool                     ok = true;
+    std::vector<std::string> removed;    // 真删掉的目录
+    long long                bytes = 0;  // 腾出多少字节
+    std::string              error;
+};
+
+// 幂等：目录本来就不存在不算失败（脚本敢连着调两次）。
+CleanReport cleanProject(const std::string& proj) {
+    CleanReport rep;
+    for (const std::string& d : cleanTargets(proj)) {
+        if (!isDirU8(d)) continue;
+        long long sz = dirSizeU8(d);
+        if (!removeTreeU8(d)) {
+            rep.ok = false;
+            rep.error = "删不掉 " + d + "（是不是有程序正占着里面的文件？）";
+            return rep;
+        }
+        rep.removed.push_back(d);
+        rep.bytes += sz;
+    }
+    return rep;
+}
+
+// ------------------------------------------------------------------ 窗口几何
+// App 不暴露窗口句柄，只能问 glfw 要当前上下文那个窗口（OpenGL 后端下就是主窗口）。
+// DX11 后端返回 nullptr：位置还原 / 置顶 / 紧凑模式改大小整体降级，布局本身不受影响。
+GLFWwindow* wbWindow() { return glfwGetCurrentContext(); }
+
+// 「上次存下来的位置，在现在这套显示器上还看得见吗」——只回答能不能用，**不修正、不夹取**。
+// 夹尺寸是 src/backend.cpp 的 computeWindowGeometry() 的活，这里写第二份就是重复实现。
+// 只验窗口顶部那条标题栏带：能抓住标题栏，用户就能把窗口拖回来（docs/ui-design.md 4.5）。
+bool positionStillVisible(int x, int y, int w, int h) {
+    int count = 0;
+    GLFWmonitor** mons = glfwGetMonitors(&count);
+    if (!mons || count <= 0) return false;
+    int bandH = M::kTitleBandH;
+    if (bandH > h) bandH = h;
+    for (int i = 0; i < count; ++i) {
+        int mx = 0, my = 0, mw = 0, mh = 0;
+        glfwGetMonitorWorkarea(mons[i], &mx, &my, &mw, &mh);
+        int ix = std::max(x, mx), iy = std::max(y, my);
+        int ax = std::min(x + w, mx + mw), ay = std::min(y + bandH, my + mh);
+        if (ax - ix >= M::kTitleBandMinW && ay - iy >= M::kTitleBandMinH) return true;
+    }
+    return false;
+}
+
+// 启动时还原位置：验过了才 setPos，验不过什么都不做（窗口留在 backend 居中好的位置）。
+void restoreWindowPos() {
+    WB&         w = wb();
+    GLFWwindow* win = wbWindow();
+    if (!win || w.winX == INT_MIN || w.winY == INT_MIN) return;
+    int cw = 0, ch = 0;
+    glfwGetWindowSize(win, &cw, &ch);
+    if (!positionStillVisible(w.winX, w.winY, cw, ch)) {
+        // 换过外接屏 / 换过分辨率：这个位置现在看不见了，丢掉它
+        sayTS("上次的窗口位置在现在的显示器上看不见了，这次居中打开");
+        w.winX = w.winY = INT_MIN;
+        return;
+    }
+    glfwSetWindowPos(win, w.winX, w.winY);
+}
+
+void applyAlwaysOnTop() {
+    GLFWwindow* win = wbWindow();
+    if (win) glfwSetWindowAttrib(win, GLFW_FLOATING, wb().alwaysOnTop ? GLFW_TRUE : GLFW_FALSE);
+}
+
+void applySizeLimits(float dpi) {
+    GLFWwindow* win = wbWindow();
+    if (!win) return;
+    const WB& w = wb();
+    int       mw = (int)((w.compact ? M::kMinCompactW : M::kMinFullW) * dpi);
+    int       mh = (int)((w.compact ? M::kMinCompactH : M::kMinFullH) * dpi);
+    glfwSetWindowSizeLimits(win, mw, mh, GLFW_DONT_CARE, GLFW_DONT_CARE);
+}
+
 // ------------------------------------------------------------------ 编译 / 运行
 bool spawn(const std::vector<std::string>& argv, const std::string& cwd) {
     WB&              w = wb();
@@ -428,7 +757,7 @@ bool spawn(const std::vector<std::string>& argv, const std::string& cwd) {
 }
 
 // 打「构建目录 ...（Ninja · RelWithDebInfo）」+「$ cmake ...」+（--verbose 才有的）
-// 环境细节。startConfigure()（平时编译）和 startPackage()（生成 exe 的 Release 配置）
+// 环境细节。startConfigure()（平时编译）和 startPackage()（导出应用程序的 Release 配置）
 // 共用——两边参数不一样，但「说清楚在哪、编成什么样」这句台词是同一句。
 void logConfigureStart(const std::string& build, const char* buildType,
                        const std::vector<std::string>& argv) {
@@ -455,6 +784,7 @@ void startConfigure() {
     w.stage = Configuring;
     if (!spawn(argv, w.projectDir)) return;
     w.status = "配置中…";
+    setBusy(w.wantPackage ? "生成应用程序中" : "编译中");
 }
 
 void startBuild() {
@@ -467,6 +797,7 @@ void startBuild() {
     w.stage = Building;
     if (!spawn(argv, w.projectDir)) return;
     w.status = "编译中…";
+    setBusy("编译中");
 }
 
 void startApp() {
@@ -484,12 +815,14 @@ void startApp() {
     if (!existsU8(argv[0])) {
         sayTS("没找到编出来的程序：" + argv[0], 1);
         w.stage = Idle;
+        failed("失败 没找到编出来的程序");
         return;
     }
     sayTS("$ " + Proc::describe(argv) + "（作品的窗口会自己弹出来）");
     w.stage = Running;
     if (!spawn(argv, w.projectDir)) return;
     w.status = "运行中 —— 作品在另一个窗口里";
+    setBusy("运行中 作品在另一个窗口里");
 }
 
 void compileAndRun() {
@@ -502,6 +835,7 @@ void compileAndRun() {
         say("上一个还在跑，先按「停止」。");
         return;
     }
+    w.pendingRun = false;
     beginLog();
     w.pending.clear();
     w.wantPackage = false;
@@ -521,10 +855,26 @@ void compileAndRun() {
     flushLog();
 }
 
-// 「打开日志目录」按钮：优先让 VS Code 打开日志文件本身（能直接看内容），
+// 「运行」按钮和 F5 的唯一入口。作品正在跑的时候按下去 = 先掐掉它，再重新编译运行
+// （Processing 的 Run 就是这个行为；理由见 docs/ui-design.md 2.2）。正在配置 / 编译时
+// 按钮是灰的，走不到这儿。
+void runOrRerun() {
+    WB& w = wb();
+    if (w.projectDir.empty()) return;
+    if (w.stage == Running && w.proc.running()) {
+        say("已停止上一次运行");
+        w.proc.kill();        // 收尾仍然走 pump()（退出码 -2），那边看见 pendingRun 就接着重跑
+        w.pendingRun = true;
+        return;
+    }
+    if (w.proc.running()) return;   // 配置 / 编译中：按钮本来就是灰的，保险
+    compileAndRun();
+}
+
+// 「打开日志文件」菜单项：优先让 VS Code 打开日志文件本身（能直接看内容），
 // 没有 VS Code 就退到系统的「在文件管理器里定位这个文件」命令——file::folder()
 // 只会弹目录选择对话框，不是我们要的「带我去看那个文件」，不合适。
-void openLogFolder(const std::string& logPath) {
+void openLogFile(const std::string& logPath) {
     if (logPath.empty()) return;
     if (openInEditor(logPath, 0, 0)) return;
     std::vector<std::string> argv;
@@ -540,8 +890,8 @@ void openLogFolder(const std::string& logPath) {
     p.start(argv, {}, &err);
 }
 
-// 「生成 exe」共用的部分：把 Release 版 exe + assets + data 拷成一个能双击的目录。
-// GUI 的「生成 exe」按钮（finishPackage()）和无头 `--package`（headless::cmdPackage）
+// 「导出应用程序」共用的部分：把 Release 版程序 + assets + data 拷成一个能双击的目录。
+// GUI 的「导出应用程序」（finishPackage()）和无头 `--package`（headless::cmdPackage）
 // 都调它——两边前面配置/编译的方式不同（一个是异步 Proc + pump()，一个是同步
 // runBlocking()），但编完之后「怎么收进 dist/」是同一套逻辑，不该抄两遍。
 // outExeBytes 非空时回填交付出去那个可执行文件的大小——日志要打出来（第 2 部分）。
@@ -576,20 +926,23 @@ std::string packageInto(const std::string& projectDir, std::string* err, long lo
     return dest;
 }
 
-// 「生成 exe」：Release 编一遍，然后把 exe + assets + data 拷成一个能双击的目录
+// 「导出应用程序」：Release 编一遍，然后把程序 + assets + data 拷成一个能双击的目录
 void finishPackage() {
     WB&         w = wb();
     std::string err;
     long long   bytes = 0;
     std::string dest = packageInto(w.projectDir, &err, &bytes);
     if (dest.empty()) {
-        sayTS("生成失败：" + err, 1);
+        sayTS("导出失败：" + err, 1);
+        failed("失败 导出应用程序没成功");
         flushLog();
         return;
     }
-    sayTS("生成完成 → " + dest + "（" + formatBytes(bytes) + "）");
+    sayTS("导出完成 -> " + dest + "（" + formatBytes(bytes) + "）");
+    setSummary("完成 已导出应用程序 · " + baseName(dest) + " · " + formatBytes(bytes), 2);
+    w.lastResult = ResOk;
     flushLog();
-    if (App::instance()) App::instance()->toast("exe 生成好了");
+    if (App::instance()) App::instance()->toast("应用程序导出好了");
 }
 
 void startPackage() {
@@ -600,21 +953,98 @@ void startPackage() {
     sayTS("工程 " + w.projectDir);
     if (cmakeMissing()) {
         w.wantPackage = false;
+        failed("失败 找不到 cmake");
         flushLog();
         return;
     }
     std::string              rel = releaseDir(w.projectDir);
     std::vector<std::string> argv = configureArgs(w.projectDir, rel, "Release");
     logConfigureStart(rel, "Release", argv);
-    sayTS("生成交付用的 exe：优化过、不带调试信息，比平时慢一点编。");
+    sayTS("导出交付用的应用程序：优化过、不带调试信息，比平时慢一点编。");
     w.stage = Configuring;
     if (!spawn(argv, w.projectDir)) return;
     w.status = "配置 Release…";
+    setBusy("生成应用程序中");
+    flushLog();
+}
+
+// 「导出工程」：exportProject() 是同步阻塞的（几十秒），所以分两步——先把「导出工程中」
+// 画出去一帧（置 pendingExportProject），下一帧在 pump() 里才真干活。不这样的话用户看到
+// 的是一个一动不动的假死窗口（docs/ui-design.md 2.1、第 7 节第 2 条）。
+void beginExportProject() {
+    WB& w = wb();
+    if (w.projectDir.empty() || w.proc.running()) return;
+    beginLog();
+    std::string outDir = w.exportOutDir[0] ? std::string(w.exportOutDir)
+                                           : joinPath(joinPath(w.projectDir, "dist"), baseName(w.projectDir));
+    sayTS("源工程 " + w.projectDir);
+    sayTS("导出到 " + outDir);
+    logVerboseEnv(w.projectDir);
+    sayTS("正在导出完整工程…（几十 MB，界面会卡一下）");
+    setBusy("导出工程中");
+    w.pendingExportProject = true;
+    flushLog();
+}
+
+void finishExportProject() {
+    WB& w = wb();
+    w.pendingExportProject = false;
+    ExportOptions o;
+    o.projectDir = w.projectDir;
+    o.easelDir = w.easelDir;
+    o.name = baseName(w.projectDir);
+    if (w.exportOutDir[0]) o.outDir = w.exportOutDir;
+    ExportReport rep = exportProject(o);
+    for (const std::string& l : rep.checks)
+        addOut(l, l.rfind("[×]", 0) == 0 ? 1 : l.rfind("[!]", 0) == 0 ? 2 : 0);
+    if (rep.ok) {
+        sayTS("导出完成 -> " + rep.outDir + "（" + std::to_string(rep.files) + " 个文件，" +
+              formatBytes(rep.bytes) + "）");
+        setSummary("完成 已导出工程 · " + std::to_string(rep.files) + " 个文件 · " +
+                       formatBytes(rep.bytes), 2);
+        w.lastResult = ResOk;
+    } else {
+        sayTS("导出失败：" + rep.error, 1);
+        failed("失败 导出工程没成功");
+    }
+    w.busyText.clear();
+    flushLog();
+}
+
+// 「清理」：删两个构建目录，报腾出多少空间。不弹确认框（和 VS / Xcode / IntelliJ 一致：
+// 删的是可以重新生成的东西），分寸靠菜单项的 tooltip + 这里的报告（docs/ui-design.md 6.3）。
+void doClean() {
+    WB& w = wb();
+    if (w.projectDir.empty() || w.proc.running()) return;
+    beginLog();
+    sayTS("工程 " + w.projectDir);
+    sayTS("清理构建产物（不动 dist/，也不动你的代码）");
+    CleanReport rep = cleanProject(w.projectDir);
+    for (const std::string& d : rep.removed) sayTS("删掉 " + d);
+    if (!rep.ok) {
+        sayTS(rep.error, 1);
+        failed("失败 清理没做完");
+    } else if (rep.removed.empty()) {
+        sayTS("没有构建产物可清理（两个构建目录都不在）");
+        setSummary("完成 清理 本来就没有构建产物", 2);
+        w.lastResult = ResNone;
+    } else {
+        sayTS("清理完成，腾出 " + formatBytes(rep.bytes));
+        setSummary("完成 清理 腾出 " + formatBytes(rep.bytes), 2);
+        // 上一次编译的结论已经不成立了，挂着「完成 2.5 秒」是在说谎 → 回到「还没跑过」
+        w.lastResult = ResNone;
+    }
+    w.cleanBytes = -1;
     flushLog();
 }
 
 void pump() {
     WB& w = wb();
+    // 「导出工程」是同步阻塞的：上一帧已经把「导出工程中」画出去了，这一帧才真干活
+    if (w.pendingExportProject) {
+        finishExportProject();
+        return;
+    }
     if (w.stage == Idle && !w.proc.running()) return;
 
     std::string chunk;
@@ -650,6 +1080,8 @@ void pump() {
             w.status = "配置失败";
             w.stage = Idle;
             w.wantPackage = false;
+            w.pendingRun = false;
+            failed("失败 编译没能开始 · 看下面的输出");
             flushLog();
             return;
         }
@@ -697,13 +1129,20 @@ void pump() {
             w.status = "编译失败";
             w.stage = Idle;
             w.wantPackage = false;
+            w.pendingRun = false;
+            if (w.errors || w.warnings) {
+                std::snprintf(buf, sizeof buf, "失败 %d 个错误、%d 个警告", w.errors, w.warnings);
+                failed(buf);
+            } else {
+                failed("失败 编译没过，但没有具体的错误可以点（多半是环境问题）");
+            }
             flushLog();
             return;
         }
         std::string exe = w.wantPackage ? exeIn(releaseDir(w.projectDir)) : appExe(w.projectDir);
         long long   sz = 0;
         fileStamp(exe, nullptr, &sz);
-        std::snprintf(buf, sizeof buf, "编译完成 → %s（%s）%s", exe.c_str(), formatBytes(sz).c_str(),
+        std::snprintf(buf, sizeof buf, "编译完成 -> %s（%s）%s", exe.c_str(), formatBytes(sz).c_str(),
                       w.warnings ? ("，" + std::to_string(w.warnings) + " 个警告").c_str() : "");
         sayTS(buf);
         if (w.wantPackage) {
@@ -712,6 +1151,14 @@ void pump() {
             w.status = "就绪";
             finishPackage();
         } else {
+            // 摘要行的结论：编了多久、走的哪条路、产物多大。作品退出时还要接着用它
+            std::string sum = "完成 编译 " + secText(w.opClock.s());
+            if (!w.libNote.empty()) sum += " · " + w.libNote;
+            if (sz > 0) sum += " · " + formatBytes(sz);
+            if (w.warnings) sum += " · " + std::to_string(w.warnings) + " 个警告";
+            w.buildSummary = sum;
+            setSummary(sum, w.warnings ? 3 : 2);
+            w.lastResult = ResOk;
             startApp();
         }
         flushLog();
@@ -721,20 +1168,35 @@ void pump() {
     if (w.stage == Running) {
         if (code == 0) {
             sayTS("作品退出，退出码 0");
+            setSummary((w.buildSummary.empty() ? std::string("完成") : w.buildSummary) + " · 作品已退出", 2);
+            w.lastResult = ResOk;
         } else if (code == -2) {
             sayTS("已停止");
+            setSummary("已停止" + (w.buildSummary.empty() ? std::string() : " · " + w.buildSummary), 0);
+            w.lastResult = ResOk;
         } else if (code >= 128) {
             std::snprintf(buf, sizeof buf,
                           "作品被信号 %d 打断 —— 多半是越界或空指针。改完再跑一次；"
                           "要查具体哪一行，用 VS Code 的 F5 调试。",
                           code - 128);
             sayTS(buf, 1);
+            std::snprintf(buf, sizeof buf, "失败 作品被信号 %d 打断（多半是越界或空指针）", code - 128);
+            failed(buf);
         } else {
             std::snprintf(buf, sizeof buf, "作品退出，退出码 %d", code);
             sayTS(buf, 2);
+            std::snprintf(buf, sizeof buf, "完成 作品退出，退出码 %d", code);
+            setSummary(buf, 3);
+            w.lastResult = ResOk;
         }
         w.stage = Idle;
         w.status = "就绪";
+        w.busyText.clear();
+        // 「运行中按运行 = 重跑」：上一个作品收完尾，这里接着走新的一轮（docs/ui-design.md 2.2）
+        if (w.pendingRun) {
+            w.pendingRun = false;
+            compileAndRun();
+        }
     }
     flushLog();
 }
@@ -824,7 +1286,10 @@ json diagToJson(const Diag& d) {
 
 // 校验「这是一个能无头操作的工程」：目录存在、是新式工程（.easel/CMakeLists.txt，
 // --new 建出来的都是这种）、cmake 找得到。三条里随便哪条不满足都直接说清楚原因。
-bool resolveProject(const std::string& raw, std::string* dir, std::string* err) {
+// needCmake=false：这个命令压根不用编译（--clean）。**别让「没装 cmake」把清理也挡掉**——
+// 构建目录坏掉、机器上没有 cmake，正好是最需要清理的场景之一。
+bool resolveProject(const std::string& raw, std::string* dir, std::string* err,
+                    bool needCmake = true) {
     std::string d = raw.empty() ? std::string() : absPath(raw);
     if (d.empty() || !isDirU8(d)) {
         *err = "找不到工程目录：" + raw;
@@ -834,7 +1299,7 @@ bool resolveProject(const std::string& raw, std::string* dir, std::string* err) 
         *err = d + " 不像一个工程（没有 .easel/CMakeLists.txt，是不是没用 --new 建的？）";
         return false;
     }
-    if (toolchain().cmake.empty()) {
+    if (needCmake && toolchain().cmake.empty()) {
         *err = "找不到 cmake：装 CMake（brew install cmake / 工具箱里已自带）或把它加进 PATH";
         return false;
     }
@@ -932,7 +1397,7 @@ BuildOutcome runBuild(const std::string& dir) {
         std::string exe = appExe(dir);
         long long   sz = 0;
         fileStamp(exe, nullptr, &sz);
-        stamp("编译完成 → " + exe + "（" + formatBytes(sz) + "）" +
+        stamp("编译完成 -> " + exe + "（" + formatBytes(sz) + "）" +
               (out.warnings ? "，" + std::to_string(out.warnings) + " 个警告" : std::string()));
     } else if (out.errors == 0 && out.warnings == 0) {
         // 一个错误/警告都没有：--json 也拿不出诊断（diagnostics 数组会是空的），
@@ -1143,7 +1608,7 @@ int cmdPackage(const std::string& raw, bool jsonOut) {
         if (output.empty()) b.ok = false;
     }
     if (!output.empty())
-        stamp("生成完成 → " + output + "（" + formatBytes(bytes) + "）");
+        stamp("生成完成 -> " + output + "（" + formatBytes(bytes) + "）");
     else if (!packErr.empty())
         stamp(packErr);
 
@@ -1185,7 +1650,7 @@ int cmdExport(const std::string& raw, bool jsonOut) {
     ExportReport rep = exportProject(o);
     for (const std::string& c : rep.checks) pretty += c + "\n";
     if (rep.ok)
-        stamp("导出完成 → " + rep.outDir + "（" + std::to_string(rep.files) + " 个文件，" +
+        stamp("导出完成 -> " + rep.outDir + "（" + std::to_string(rep.files) + " 个文件，" +
               formatBytes(rep.bytes) + "）");
     else
         stamp("导出失败：" + rep.error);
@@ -1203,6 +1668,45 @@ int cmdExport(const std::string& raw, bool jsonOut) {
         json checks = json::array();
         for (const std::string& c : rep.checks) checks.push_back(c);
         j["checks"] = checks;
+        if (!rep.ok) j["error"] = rep.error;
+        std::cout << j.dump(2) << std::endl;
+    } else {
+        std::fwrite(pretty.data(), 1, pretty.size(), stdout);
+    }
+    return rep.ok ? 0 : 1;
+}
+
+// easel --clean <工程目录> [--json]：删掉两个构建目录，腾出空间。和界面上的「清理」同一份
+// 实现（cleanProject()），删什么不删什么见 docs/ui-design.md 6.3 —— 尤其是 dist/ 不动。
+// 幂等：目录本来就不存在也算成功（脚本敢连着调两次）。清理不需要 cmake。
+int cmdClean(const std::string& raw, bool jsonOut) {
+    std::string dir, err;
+    if (!resolveProject(raw, &dir, &err, /*needCmake=*/false)) return failEarly(err, jsonOut);
+
+    Stopwatch   sw;
+    std::string pretty = banner(dir);
+    auto        stamp = [&](const std::string& t) { pretty += formatStamp(sw.s()) + t + "\n"; };
+    stamp("工程 " + dir);
+    stamp("清理构建产物（不动 dist/，也不动你的代码）");
+    CleanReport rep = cleanProject(dir);
+    for (const std::string& d : rep.removed) stamp("删掉 " + d);
+    if (!rep.ok)
+        stamp(rep.error);
+    else if (rep.removed.empty())
+        stamp("没有构建产物可清理（两个构建目录都不在）");
+    else
+        stamp("清理完成，腾出 " + formatBytes(rep.bytes));
+    writeLog(dir, pretty);
+
+    if (jsonOut) {
+        json j;
+        j["ok"] = rep.ok;
+        j["action"] = "clean";
+        j["project"] = dir;
+        json arr = json::array();
+        for (const std::string& d : rep.removed) arr.push_back(d);
+        j["removed"] = arr;
+        j["bytes"] = rep.bytes;
         if (!rep.ok) j["error"] = rep.error;
         std::cout << j.dump(2) << std::endl;
     } else {
@@ -1270,7 +1774,7 @@ void drawNewProjectPopup(float dpi) {
             useProject(r.dir);
             w.out.clear();
             say("新工程建好了：" + r.dir + "（" + std::to_string(r.files) + " 个文件）");
-            say("界面写在 src/app.cpp，算法写在 src/solver.cpp。改完回来点「编译并运行」。");
+            say("界面写在 src/app.cpp，算法写在 src/solver.cpp。改完回来点「运行」。");
             ImGui::CloseCurrentPopup();
         } else {
             addOut(r.error, 1);
@@ -1281,165 +1785,448 @@ void drawNewProjectPopup(float dpi) {
     ImGui::EndPopup();
 }
 
-void draw(const Rect& r, const Theme& th, float dpi) {
+// ---------------------------------------------------------------- 状态机
+// 状态 = 有没有工程 × stage × 上一次操作的结果。六个状态，界面没有第七种长相
+// （docs/ui-design.md 第 2 节）。
+UiState uiState() {
+    const WB& w = wb();
+    if (w.projectDir.empty()) return StEmpty;
+    if (w.stage == Running) return StRunning;
+    if (w.pendingExportProject || w.stage == Configuring || w.stage == Building || w.proc.running())
+        return StBusy;
+    if (w.lastResult == ResFail) return StFail;
+    if (w.lastResult == ResOk) return StOk;
+    return StFresh;
+}
+
+bool busyState(UiState st) { return st == StBusy || st == StRunning; }
+
+// 四档字号，只能通过这两个函数用（docs/ui-design.md 5.3）
+void pushTier(float tier) { ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * tier); }
+void popTier() { ImGui::PopFont(); }
+
+// ---------------------------------------------------------------- 动作
+void stopNow() {
     WB& w = wb();
-    ImGui::SetNextWindowPos(ImVec2((float)r.x, (float)r.y));
-    ImGui::SetNextWindowSize(ImVec2((float)r.w, (float)r.h));
-    ImGui::Begin("##wb", nullptr,
-                 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
-                     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus);
+    if (!w.proc.running()) return;
+    w.proc.kill();
+    say("已停止");
+    w.stage = Idle;
+    w.status = "就绪";
+    w.pendingRun = false;
+    w.busyText.clear();
+    setSummary("已停止", 0);
+    flushLog();
+}
 
-    // ---- 工程 ----
-    ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 1.5f);
-    ImGui::TextUnformatted(w.projectDir.empty() ? "还没有工程" : baseName(w.projectDir).c_str());
-    ImGui::PopFont();
-    if (!w.projectDir.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(th.muted.r, th.muted.g, th.muted.b, 1));
-        ImGui::TextUnformatted(w.projectDir.c_str());
-        ImGui::PopStyleColor();
-    }
-    ImGui::Spacing();
+void openProjectDialog() {
+    WB&         w = wb();
+    std::string d = file::folder(w.projectDir.empty() ? nullptr : w.projectDir.c_str());
+    if (d.empty()) return;
+    if (existsU8(joinPath(d, "src/app.cpp")))
+        useProject(d);
+    else
+        addOut(d + " 不像一个作品工程（里面没有 src/app.cpp）", 1);
+}
 
-    bool busy = w.proc.running();
-    if (ImGui::Button("新建工程…")) {
-        if (!w.newParent[0])
-            std::snprintf(w.newParent, sizeof w.newParent, "%s", defaultProjectsDir().c_str());
-        ImGui::OpenPopup("新建工程");
+void copyAllOutput() {
+    std::string all;
+    for (const OutLine& o : wb().out) all += o.text + "\n";
+    ImGui::SetClipboardText(all.c_str());
+}
+
+// ---------------------------------------------------------------- 两种模式
+// 紧凑模式 = 把日志区收起来，窗口高度贴着剩下四段的内容（docs/ui-design.md 4.2）。
+// 自动改窗口大小只发生在「切模式」「进 / 出失败状态」这两个时刻，而且是一次性的；
+// 用户之后自己怎么拖都不管（fitCompactHeight 里用 lastSetH 判断有没有被插手过）。
+void setCompact(bool on, float dpi);
+
+void fitCompactHeight(float dpi, float neededPx) {
+    WB&         w = wb();
+    GLFWwindow* win = wbWindow();
+    if (!win || !w.compact || w.fitFrames <= 0) return;
+    int cw = 0, ch = 0;
+    glfwGetWindowSize(win, &cw, &ch);
+    if (w.lastSetH && std::abs(ch - w.lastSetH) > 2) {   // 用户自己拖过高度：别再跟他抢
+        w.fitFrames = 0;
+        return;
     }
-    ImGui::SameLine();
-    if (ImGui::Button("打开工程…")) {
-        std::string d = file::folder(w.projectDir.empty() ? nullptr : w.projectDir.c_str());
-        if (!d.empty()) {
-            if (existsU8(joinPath(d, "src/app.cpp")))
-                useProject(d);
-            else
-                addOut(d + " 不像一个作品工程（里面没有 src/app.cpp）", 1);
+    int want = (int)(neededPx + 0.5f);
+    int maxH = (int)(M::kGrowMaxH * dpi), minH = (int)(M::kMinCompactH * dpi);
+    if (want > maxH) want = maxH;
+    if (want < minH) want = minH;
+    if (std::abs(want - ch) > 2) {
+        glfwSetWindowSize(win, cw, want);
+        w.lastSetH = want;
+    }
+    --w.fitFrames;
+}
+
+void setCompact(bool on, float dpi) {
+    WB& w = wb();
+    if (w.compact == on) return;
+    GLFWwindow* win = wbWindow();
+    if (win && !w.compact) {   // 离开完整模式之前记住它的尺寸，回来要还原
+        int cw = 0, ch = 0;
+        glfwGetWindowSize(win, &cw, &ch);
+        w.fullW = (int)(cw / dpi);
+        w.fullH = (int)(ch / dpi);
+    }
+    w.compact = on;
+    w.grown = false;
+    applySizeLimits(dpi);
+    if (!win) return;
+    if (on) {
+        // 先给一个估计值，下一帧按实际内容高度贴合（fitCompactHeight）
+        int est = (int)((M::kProjectH + M::kActionH + M::kSummaryH + 60.f) * dpi);
+        glfwSetWindowSize(win, (int)(M::kCompactW * dpi), est);
+        w.lastSetH = est;
+        w.fitFrames = 3;
+    } else {
+        glfwSetWindowSize(win, (int)(w.fullW * dpi), (int)(w.fullH * dpi));
+        w.lastSetH = 0;
+        w.fitFrames = 0;
+    }
+}
+
+// 窗口位置 / 完整模式尺寸每帧记在内存里，退出时写一次盘（别每帧写盘）
+void trackGeometry(float dpi) {
+    WB&         w = wb();
+    GLFWwindow* win = wbWindow();
+    if (!win) return;
+    int x = 0, y = 0;
+    glfwGetWindowPos(win, &x, &y);
+    w.winX = x;
+    w.winY = y;
+    if (!w.compact) {
+        int cw = 0, ch = 0;
+        glfwGetWindowSize(win, &cw, &ch);
+        if (cw > 0 && ch > 0) {
+            w.fullW = (int)(cw / dpi);
+            w.fullH = (int)(ch / dpi);
         }
     }
-    ImGui::SameLine();
-    ImGui::BeginDisabled(w.projectDir.empty());
-    if (ImGui::Button("复制路径")) {
-        ImGui::SetClipboardText(w.projectDir.c_str());
-        say("工程路径已复制：" + w.projectDir);
+}
+
+// 帮助 → 环境自检：把 --doctor 的内容打进日志区。紧凑模式下日志是收起来的，
+// 那就顺手展开——否则点下去界面上什么都不会发生。
+void runDoctor(float dpi) {
+    WB& w = wb();
+    if (!App::instance()) return;
+    beginLog();
+    sayTS("环境自检（命令行等价物：easel --doctor）");
+    std::string text = App::instance()->doctor();
+    size_t      start = 0;
+    while (start < text.size()) {
+        size_t      nl = text.find('\n', start);
+        std::string line = text.substr(start, nl == std::string::npos ? std::string::npos : nl - start);
+        if (!line.empty()) addOut(line, 0);
+        if (nl == std::string::npos) break;
+        start = nl + 1;
     }
-    ImGui::EndDisabled();
-    if (!w.recent.empty()) {
-        ImGui::SameLine();
-        if (ImGui::BeginCombo("##recent", "最近的工程", ImGuiComboFlags_WidthFitPreview)) {
+    setCompact(false, dpi);
+    flushLog();
+}
+
+// ---------------------------------------------------------------- 菜单栏
+// 「一个作品用一次」的操作全在这儿（docs/ui-design.md 第 3 节）。主操作区只留运行 / 停止。
+void drawMenuBar(float dpi) {
+    WB&    w = wb();
+    UiState st = uiState();
+    bool   busy = busyState(st);
+    bool   hasProj = !w.projectDir.empty();
+    if (!ImGui::BeginMenuBar()) return;
+
+    if (ImGui::BeginMenu("文件")) {
+        if (hasProj && w.cleanBytes < 0) w.cleanBytes = cleanableBytes(w.projectDir);
+        if (ImGui::MenuItem("新建工程…")) {
+            if (!w.newParent[0])
+                std::snprintf(w.newParent, sizeof w.newParent, "%s", defaultProjectsDir().c_str());
+            w.openNewProject = true;
+        }
+        if (ImGui::MenuItem("打开工程…")) openProjectDialog();
+        if (ImGui::BeginMenu("最近打开", !w.recent.empty())) {
             for (const std::string& d : w.recent)
-                if (ImGui::Selectable(d.c_str())) useProject(d);
-            ImGui::EndCombo();
+                if (ImGui::MenuItem(d.c_str())) useProject(d);
+            ImGui::EndMenu();
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("导出应用程序…", nullptr, false, hasProj && !busy)) w.openExportApp = true;
+        if (ImGui::MenuItem("导出工程…", nullptr, false, hasProj && !busy)) {
+            std::snprintf(w.exportOutDir, sizeof w.exportOutDir, "%s",
+                          joinPath(joinPath(w.projectDir, "dist"), baseName(w.projectDir)).c_str());
+            w.openExportProject = true;
+        }
+        ImGui::Separator();
+        // 清理：不弹确认框（和 VS / Xcode / IntelliJ 一致），但点之前就把删什么、多大说清楚
+        if (ImGui::MenuItem("清理", nullptr, false, hasProj && !busy)) doClean();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            std::string tip = "删掉这个工程的两个构建目录（编译产物，可以重新生成）";
+            if (hasProj && w.cleanBytes > 0) tip += "，现在约 " + formatBytes(w.cleanBytes);
+            tip += "。\n不会动 dist/ 里导出的东西，也不会动你的代码。";
+            ImGui::SetTooltip("%s", tip.c_str());
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("复制工程路径", nullptr, false, hasProj)) {
+            ImGui::SetClipboardText(w.projectDir.c_str());
+            say("工程路径已复制：" + w.projectDir);
+        }
+        if (ImGui::MenuItem("复制输出", nullptr, false, !w.out.empty())) copyAllOutput();
+        if (ImGui::MenuItem("打开日志文件", nullptr, false, hasProj))
+            openLogFile(joinPath(w.projectDir, ".easel/last-build.log"));
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("这次操作的完整输出存在 .easel/last-build.log 里");
+        ImGui::Separator();
+        if (ImGui::MenuItem("退出") && App::instance()) App::instance()->quit();
+        ImGui::EndMenu();
+    }
+
+    if (ImGui::BeginMenu("设置")) {
+        if (ImGui::MenuItem("运行参数…", nullptr, false, !busy)) w.openRunArgs = true;
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("原样传给作品的命令行参数，相当于 easel --run <工程> --args \"…\"");
+        ImGui::Separator();
+        if (ImGui::MenuItem("详细输出", nullptr, w.verboseUI)) {
+            w.verboseUI = !w.verboseUI;
+            internal::setVerbose(w.verboseUI);
+            saveConfig();
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("下一次操作会多打一截排障细节：完整 PATH、子进程工作目录、\n"
+                              "easel-prebuilt.json / VERSION.json 的原文。命令行等价于 --verbose");
+        if (ImGui::MenuItem("紧凑模式", nullptr, w.compact)) setCompact(!w.compact, dpi);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("把输出区收起来，只留工程、运行 / 停止和结论那一行");
+        bool canTop = wbWindow() != nullptr;
+        if (ImGui::MenuItem("始终置顶", nullptr, w.alwaysOnTop, canTop)) {
+            w.alwaysOnTop = !w.alwaysOnTop;
+            applyAlwaysOnTop();
+            saveConfig();
+        }
+        ImGui::EndMenu();
+    }
+
+    if (ImGui::BeginMenu("帮助")) {
+        if (ImGui::MenuItem("环境自检", nullptr, false, !busy)) runDoctor(dpi);
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("把环境情况打进输出区（命令行等价物：easel --doctor）");
+        if (ImGui::MenuItem("关于 Easel")) w.openAbout = true;
+        ImGui::EndMenu();
+    }
+
+    ImGui::EndMenuBar();
+}
+
+// ---------------------------------------------------------------- 工程栏
+// 「现在是哪个工程」。路径弱化（小一号 + 次要色），它是用来核对「我是不是打开错了」的，
+// 不是主角；点一下复制。右边只有两个东西：始终置顶、收起 / 展开输出区。
+void drawProjectBar(const Theme& th, float dpi) {
+    WB&   w = wb();
+    float y0 = ImGui::GetCursorPosY();
+
+    // 右侧先量宽度，再右对齐摆
+    float topW = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x +
+                 ImGui::CalcTextSize("始终置顶").x;
+    const char* foldLabel = w.compact ? "展开" : "收起";
+    float       foldW = ImGui::CalcTextSize(foldLabel).x + ImGui::GetStyle().FramePadding.x * 2.f;
+
+    ImGui::BeginGroup();
+    pushTier(M::kT1);
+    ImGui::TextUnformatted(w.projectDir.empty() ? "还没有打开工程" : baseName(w.projectDir).c_str());
+    popTier();
+    if (!w.projectDir.empty()) {
+        pushTier(M::kT3);
+        ImGui::PushStyleColor(ImGuiCol_Text, iv4(th.muted));
+        std::string line = w.projectDir;
+        if (w.runArgs[0]) line += "   参数：" + std::string(w.runArgs);
+        if (ImGui::Selectable(line.c_str(), false, 0,
+                              ImVec2(ImGui::CalcTextSize(line.c_str()).x, 0))) {
+            ImGui::SetClipboardText(w.projectDir.c_str());
+            say("工程路径已复制：" + w.projectDir);
+        }
+        ImGui::PopStyleColor();
+        popTier();
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            ImGui::SetTooltip("点一下复制工程路径");
         }
     }
-    drawNewProjectPopup(dpi);
+    ImGui::EndGroup();
 
+    ImGui::SameLine();
+    ImGui::SetCursorPosY(y0);
+    ImGui::SetCursorPosX(ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x -
+                         topW - M::kGap * dpi - foldW);
+    ImGui::BeginDisabled(wbWindow() == nullptr);
+    if (ImGui::Checkbox("始终置顶", &w.alwaysOnTop)) {
+        applyAlwaysOnTop();
+        saveConfig();
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine(0, M::kGap * dpi);
+    // 折叠箭头用 ImGui 自己画的（字体子集里没有 ⌃ 这类符号，见 docs/ui-design.md 第 0 节），
+    // 这里用文字按钮，和「设置 → 紧凑模式」是同一个状态，不是两个开关。
+    if (ImGui::SmallButton(foldLabel)) setCompact(!w.compact, dpi);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip(w.compact ? "展开输出区（退出紧凑模式）" : "收起输出区（紧凑模式）");
+
+    ImGui::SetCursorPosY(y0 + M::kProjectH * dpi);
     ImGui::Separator();
-    ImGui::Spacing();
+}
 
-    // ---- 四个按钮 ----
-    ImVec2 big(190 * dpi, 40 * dpi);
-    ImGui::BeginDisabled(busy || w.projectDir.empty());
-    if (ImGui::Button("编译并运行   F5", big)) compileAndRun();
-    ImGui::EndDisabled();
-    ImGui::SameLine();
-    ImGui::BeginDisabled(!busy);
-    if (ImGui::Button("停止", ImVec2(100 * dpi, 40 * dpi))) {
-        w.proc.kill();
-        say("已停止");
-        w.stage = Idle;
-        w.status = "就绪";
+// ---------------------------------------------------------------- 主操作区
+// 只有运行 / 停止两个按钮——循环里高频用的就这两个（docs/ui-design.md 第 3 节）。
+// 空状态是唯一的例外：那时候「运行」无从下手，这一屏里真正高频的是新建 / 打开。
+void drawActionArea(const Theme& th, float dpi) {
+    WB&     w = wb();
+    UiState st = uiState();
+    float   y0 = ImGui::GetCursorPosY();
+
+    if (st == StEmpty) {
+        ImGui::SetCursorPosY(y0 + M::kGapTight * dpi);
+        ImGui::TextUnformatted("先新建一个工程，或者打开一个已有的");
+        ImGui::Spacing();
+        if (ImGui::Button("新建工程…", ImVec2(M::kBtnRunW * dpi, M::kBtnH * dpi))) {
+            if (!w.newParent[0])
+                std::snprintf(w.newParent, sizeof w.newParent, "%s", defaultProjectsDir().c_str());
+            w.openNewProject = true;
+        }
+        ImGui::SameLine(0, M::kGapSection * dpi);
+        if (ImGui::Button("打开工程…", ImVec2(M::kBtnRunW * dpi, M::kBtnH * dpi)))
+            openProjectDialog();
+        if (!w.recent.empty()) {
+            ImGui::Spacing();
+            pushTier(M::kT3);
+            ImGui::PushStyleColor(ImGuiCol_Text, iv4(th.muted));
+            ImGui::TextUnformatted("最近打开：");
+            ImGui::PopStyleColor();
+            popTier();
+            for (size_t i = 0; i < w.recent.size() && i < (size_t)M::kRecentInEmpty; ++i) {
+                ImGui::SameLine(0, M::kGapTight * dpi);
+                pushTier(M::kT3);
+                if (ImGui::SmallButton(baseName(w.recent[i]).c_str())) useProject(w.recent[i]);
+                popTier();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", w.recent[i].c_str());
+            }
+        }
+        ImGui::Spacing();
+        ImGui::Separator();
+        return;
     }
+
+    // 按钮在这一段里垂直居中
+    ImGui::SetCursorPosY(y0 + (M::kActionH - M::kBtnH) * 0.5f * dpi);
+    ImGui::SetCursorPosX(ImGui::GetStyle().WindowPadding.x);
+
+    // 运行：配置 / 编译中置灰（同一个构建目录并发两个 cmake 会把它搞坏）；作品运行中不灰，
+    // 按下去就是重跑（理由见 docs/ui-design.md 2.2）。
+    bool runEnabled = (st != StBusy);
+    ImGui::BeginDisabled(!runEnabled);
+    // 全界面唯一一处用主色填充的元素（docs/ui-design.md 5.5）。置灰时**不涂主色**——
+    // 只靠透明度区分「能不能按」太弱，一个绿按钮半透明了还是绿的。
+    if (runEnabled) ImGui::PushStyleColor(ImGuiCol_Button, iv4(th.accent));
+    pushTier(M::kT2b);
+    if (ImGui::Button("运行   F5", ImVec2(M::kBtnRunW * dpi, M::kBtnH * dpi))) runOrRerun();
+    popTier();
+    if (runEnabled) ImGui::PopStyleColor();
     ImGui::EndDisabled();
-    ImGui::SameLine();
-    ImGui::BeginDisabled(busy || w.projectDir.empty());
-    if (ImGui::Button("生成 exe", ImVec2(120 * dpi, 40 * dpi))) startPackage();
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("编一个优化过的 Release 版，连同 assets / data 放进 dist/，可以直接双击");
-    ImGui::SameLine();
-    if (ImGui::Button("导出源码", ImVec2(120 * dpi, 40 * dpi))) {
-        ExportOptions o;
-        o.projectDir = w.projectDir;
-        o.easelDir = w.easelDir;
-        o.name = baseName(w.projectDir);
-        std::string outDirShown = joinPath(joinPath(w.projectDir, "dist"), o.name);
-        beginLog();
-        sayTS("源工程 " + w.projectDir);
-        sayTS("导出到 " + outDirShown);
-        logVerboseEnv(w.projectDir);
-        sayTS("正在导出完整源码…（几十 MB，界面会卡一下）");
-        ExportReport rep = exportProject(o);
-        for (const std::string& l : rep.checks)
-            addOut(l, l.rfind("[×]", 0) == 0 ? 1 : l.rfind("[!]", 0) == 0 ? 2 : 0);
-        if (rep.ok)
-            sayTS("导出完成 → " + rep.outDir + "（" + std::to_string(rep.files) + " 个文件，" +
-                  formatBytes(rep.bytes) + "）");
-        else
-            sayTS("导出失败：" + rep.error, 1);
-        flushLog();
-    }
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("导出一个完整工程：不装 Easel、不联网也能从头编出来");
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip(st == StRunning ? "再跑一次：先停掉正在跑的作品，重新编译运行"
+                                          : "编译你的作品并把它跑起来（快捷键 F5）");
+
+    ImGui::SameLine(0, M::kGapSection * dpi);
+    ImGui::BeginDisabled(!busyState(st));
+    if (ImGui::Button("停止", ImVec2(M::kBtnStopW * dpi, M::kBtnH * dpi))) stopNow();
     ImGui::EndDisabled();
 
-    ImGui::Spacing();
-    ImGui::SetNextItemWidth(380 * dpi);
-    ImGui::InputTextWithHint("##args", "运行参数（可留空），例如 --open data/example.json --solve",
-                             w.runArgs, sizeof w.runArgs);
-    ImGui::SameLine();
-    ImGui::TextDisabled("%s", w.status.c_str());
-
-    ImGui::Spacing();
+    ImGui::SetCursorPosY(y0 + M::kActionH * dpi);
     ImGui::Separator();
+}
 
-    // ---- 输出 ----
-    if (ImGui::Checkbox("详细", &w.verboseUI)) internal::setVerbose(w.verboseUI);
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("勾上之后下一次操作会多打一截排障细节：完整 PATH、子进程工作目录、\n"
-                          "easel-prebuilt.json / VERSION.json 的原文。命令行等价于 --verbose");
-    ImGui::SameLine();
-    ImGui::TextUnformatted("输出");
-    ImGui::SameLine();
-    if (ImGui::SmallButton("清空")) {
-        w.out.clear();
-        w.errors = w.warnings = 0;
+// ---------------------------------------------------------------- 摘要行
+// 单行，不换行、不长高。放不下就从右往左丢次要片段（结论永远留着）。
+std::string fitSummary(const std::string& text, float avail) {
+    if (ImGui::CalcTextSize(text.c_str()).x <= avail) return text;
+    // 片段是用 " · " 串起来的，从右往左丢
+    std::vector<std::string> parts;
+    const std::string        sep = " · ";
+    size_t                   start = 0;
+    for (;;) {
+        size_t p = text.find(sep, start);
+        if (p == std::string::npos) {
+            parts.push_back(text.substr(start));
+            break;
+        }
+        parts.push_back(text.substr(start, p - start));
+        start = p + sep.size();
     }
-    ImGui::SameLine();
-    if (ImGui::SmallButton("复制全部")) {
-        std::string all;
-        for (const OutLine& o : w.out) all += o.text + "\n";
-        ImGui::SetClipboardText(all.c_str());
+    while (parts.size() > 1) {
+        parts.pop_back();
+        std::string joined = parts[0];
+        for (size_t i = 1; i < parts.size(); ++i) joined += sep + parts[i];
+        if (ImGui::CalcTextSize(joined.c_str()).x <= avail) return joined;
     }
-    ImGui::SameLine();
-    ImGui::BeginDisabled(w.projectDir.empty());
-    if (ImGui::SmallButton("打开日志目录")) openLogFolder(joinPath(w.projectDir, ".easel/last-build.log"));
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("这次操作的完整输出存在 .easel/last-build.log 里");
-    ImGui::EndDisabled();
-    if (w.errors || w.warnings) {
-        ImGui::SameLine();
-        ImGui::TextColored(w.errors ? ImVec4(th.bad.r, th.bad.g, th.bad.b, 1)
-                                    : ImVec4(th.warn.r, th.warn.g, th.warn.b, 1),
-                           "%d 错误 · %d 警告", w.errors, w.warnings);
+    return parts.empty() ? text : parts[0];
+}
+
+void drawSummary(const Theme& th, float dpi) {
+    WB&     w = wb();
+    UiState st = uiState();
+    if (st == StEmpty) return;   // 空状态没有结论可说，这一段整个不画（也不留空行）
+
+    std::string text;
+    int         kind = 0;
+    if (busyState(st) && !w.busyText.empty()) {
+        text = w.busyText + " " + secText(ImGui::GetTime() - w.busyFrom);
+    } else if (!w.sumText.empty()) {
+        text = w.sumText;
+        kind = w.sumKind;
+    } else {
+        text = "还没运行过 · 按 F5 或点运行";
     }
 
-    ImGui::BeginChild("##out", ImVec2(0, 0), ImGuiChildFlags_None,
-                      ImGuiWindowFlags_HorizontalScrollbar);
-    ImGui::PushFont(monoFont(), ImGui::GetStyle().FontSizeBase * 0.92f);
-    for (size_t i = 0; i < w.out.size(); ++i) {
+    float y0 = ImGui::GetCursorPosY();
+    ImGui::SetCursorPosY(y0 + (M::kSummaryH * dpi - ImGui::GetTextLineHeight()) * 0.5f);
+    ImGui::SetCursorPosX(ImGui::GetStyle().WindowPadding.x);
+    ImVec4 col = kind == 1   ? iv4(th.bad)
+                 : kind == 2 ? iv4(th.good)
+                 : kind == 3 ? iv4(th.warn)
+                             : iv4(th.muted);
+    float  avail = ImGui::GetContentRegionAvail().x;
+    std::string shown = fitSummary(text, avail);
+    ImGui::PushStyleColor(ImGuiCol_Text, col);
+    if (!w.sumFile.empty() && w.sumLine > 0) {
+        // 失败时摘要行能点：跳到第一条错误（和点日志里那一行等价）
+        if (ImGui::Selectable(shown.c_str(), false, 0,
+                              ImVec2(ImGui::CalcTextSize(shown.c_str()).x, 0)))
+            jumpTo(w.sumFile, w.sumLine, w.sumCol);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            ImGui::SetTooltip("点一下跳到出错的那一行");
+        }
+    } else {
+        ImGui::TextUnformatted(shown.c_str());
+    }
+    ImGui::PopStyleColor();
+
+    ImGui::SetCursorPosY(y0 + M::kSummaryH * dpi);
+    ImGui::Separator();
+}
+
+// ---------------------------------------------------------------- 错误速览（紧凑模式专用）
+// 紧凑模式 + 失败：窗口自动长高，把前几条错误露出来（成功不长高，否则每次编译窗口都跳一下）。
+void drawErrorPeek(const Theme& th) {
+    WB& w = wb();
+    int shown = 0;
+    ImGui::PushFont(monoFont(), ImGui::GetStyle().FontSizeBase * M::kT3);
+    for (size_t i = 0; i < w.out.size() && shown < M::kGrowLines; ++i) {
         const OutLine& o = w.out[i];
-        ImVec4         c = o.kind == 1   ? ImVec4(th.bad.r, th.bad.g, th.bad.b, 1)
-                           : o.kind == 2 ? ImVec4(th.warn.r, th.warn.g, th.warn.b, 1)
-                           : o.kind == 3 ? ImVec4(th.accent.r, th.accent.g, th.accent.b, 1)
-                                         : ImVec4(th.fg.r, th.fg.g, th.fg.b, 1);
-        ImGui::PushStyleColor(ImGuiCol_Text, c);
+        if (o.kind != 1) continue;
+        ++shown;
+        ImGui::PushStyleColor(ImGuiCol_Text, iv4(th.bad));
         if (!o.file.empty() && o.line > 0) {
             ImGui::PushID((int)i);
-            if (ImGui::Selectable(o.text.c_str())) {
-                if (!openInEditor(o.file, o.line, o.col)) {
-                    std::string loc = o.file + ":" + std::to_string(o.line);
-                    ImGui::SetClipboardText(loc.c_str());
-                    addOut("没找到 VS Code，位置已复制：" + loc, 2);
-                }
-            }
+            if (ImGui::Selectable(o.text.c_str())) jumpTo(o.file, o.line, o.col);
             if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
             ImGui::PopID();
         } else {
@@ -1448,8 +2235,206 @@ void draw(const Rect& r, const Theme& th, float dpi) {
         ImGui::PopStyleColor();
     }
     ImGui::PopFont();
-    if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 1.f) ImGui::SetScrollHereY(1.f);
+}
+
+// ---------------------------------------------------------------- 输出区
+// 证据在这儿：编译器 / cmake / 作品的原样输出，一行不少。结论归摘要行。
+void drawLogPane(const Theme& th, float dpi) {
+    WB& w = wb();
+    ImGui::TextUnformatted("输出");
+    ImGui::SameLine(0, M::kGapSection * dpi);
+    if (ImGui::Checkbox("详细输出", &w.verboseUI)) {
+        internal::setVerbose(w.verboseUI);
+        saveConfig();
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("勾上之后下一次操作会多打一截排障细节：完整 PATH、子进程工作目录、\n"
+                          "easel-prebuilt.json / VERSION.json 的原文。命令行等价于 --verbose");
+    ImGui::SameLine(0, M::kGap * dpi);
+    if (ImGui::SmallButton("清空输出")) {
+        w.out.clear();
+        w.errors = w.warnings = 0;
+        w.firstError = -1;
+        w.scrollTo = -1;
+    }
+    const char* foldLabel = "收起";
+    ImGui::SameLine();
+    ImGui::SetCursorPosX(ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x -
+                         ImGui::CalcTextSize(foldLabel).x - ImGui::GetStyle().FramePadding.x * 2.f);
+    if (ImGui::SmallButton(foldLabel)) setCompact(true, dpi);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("收起输出区（紧凑模式）");
+
+    ImGui::BeginChild("##out", ImVec2(0, 0), ImGuiChildFlags_None,
+                      ImGuiWindowFlags_HorizontalScrollbar);
+    // 用户自己往上滚过之后就别再抢滚动条，直到下一次操作开始（beginLog 会重置）
+    if (ImGui::IsWindowHovered() && ImGui::GetIO().MouseWheel != 0.f) w.stickBottom = false;
+    ImGui::PushFont(monoFont(), ImGui::GetStyle().FontSizeBase * M::kT3);
+    for (size_t i = 0; i < w.out.size(); ++i) {
+        const OutLine& o = w.out[i];
+        ImVec4         c = o.kind == 1   ? iv4(th.bad)
+                           : o.kind == 2 ? iv4(th.warn)
+                           // 我们自己说的话是旁白，不是重点（主色只留给「运行」按钮）
+                           : o.kind == 3 ? iv4(th.muted)
+                                         : iv4(th.fg);
+        ImGui::PushStyleColor(ImGuiCol_Text, c);
+        if (!o.file.empty() && o.line > 0) {
+            ImGui::PushID((int)i);
+            if (ImGui::Selectable(o.text.c_str())) jumpTo(o.file, o.line, o.col);
+            if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            ImGui::PopID();
+        } else {
+            ImGui::TextUnformatted(o.text.c_str());
+        }
+        ImGui::PopStyleColor();
+        // 失败时把视口滚到第一条错误那一行（底部只是重复摘要行，没用）
+        if (w.scrollTo == (int)i) {
+            ImGui::SetScrollHereY(0.25f);
+            w.scrollTo = -1;
+        }
+    }
+    ImGui::PopFont();
+    if (w.stickBottom && ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 1.f)
+        ImGui::SetScrollHereY(1.f);
     ImGui::EndChild();
+}
+
+// ---------------------------------------------------------------- 对话框
+// 「导出应用程序…」的确认框：省略号对应的就是它。一屏、一句话、一个确认一个取消，
+// 不做成选项清单（docs/ui-design.md 6.2）。
+void drawExportAppPopup(float dpi) {
+    WB& w = wb();
+    if (!ImGui::BeginPopupModal("导出应用程序", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    std::string dest = joinPath(joinPath(w.projectDir, "dist"), baseName(w.projectDir) + "-release");
+    ImGui::TextWrapped("编一个优化过的版本，连同 assets / data 放进下面这个目录，"
+                       "拷给别人双击就能运行。");
+    ImGui::Spacing();
+    ImGui::TextDisabled("%s", dest.c_str());
+    ImGui::Spacing();
+    ImGui::TextDisabled("要重新编译一遍，大约几十秒。");
+    ImGui::Spacing();
+    if (ImGui::Button("导出", ImVec2(120 * dpi, 0))) {
+        ImGui::CloseCurrentPopup();
+        startPackage();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("取消", ImVec2(100 * dpi, 0))) ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+}
+
+void drawExportProjectPopup(float dpi) {
+    WB& w = wb();
+    if (!ImGui::BeginPopupModal("导出工程", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    ImGui::TextWrapped("导出一个完整工程：不装 Easel、不联网也能从头编出来（适合交作业、发给别人改）。");
+    ImGui::Spacing();
+    ImGui::SetNextItemWidth(420 * dpi);
+    ImGui::InputText("导出到", w.exportOutDir, sizeof w.exportOutDir);
+    ImGui::SameLine();
+    if (ImGui::Button("选目录…")) {
+        std::string d = file::folder(w.exportOutDir[0] ? w.exportOutDir : nullptr);
+        if (!d.empty()) std::snprintf(w.exportOutDir, sizeof w.exportOutDir, "%s", d.c_str());
+    }
+    ImGui::Spacing();
+    ImGui::TextDisabled("几十 MB，界面会卡一下。");
+    ImGui::Spacing();
+    if (ImGui::Button("导出", ImVec2(120 * dpi, 0))) {
+        ImGui::CloseCurrentPopup();
+        beginExportProject();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("取消", ImVec2(100 * dpi, 0))) ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+}
+
+void drawRunArgsPopup(float dpi) {
+    WB& w = wb();
+    if (!ImGui::BeginPopupModal("运行参数", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    ImGui::TextWrapped("原样传给你的作品的命令行参数，留空就是不传。");
+    ImGui::Spacing();
+    ImGui::SetNextItemWidth(420 * dpi);
+    ImGui::InputTextWithHint("##args", "例如 --open data/example.json --solve", w.runArgs,
+                             sizeof w.runArgs);
+    ImGui::Spacing();
+    ImGui::TextDisabled("只对这次打开有效，不会记到下次（命令行等价物：--run <工程> --args \"…\"）");
+    ImGui::Spacing();
+    if (ImGui::Button("确定", ImVec2(120 * dpi, 0))) ImGui::CloseCurrentPopup();
+    ImGui::SameLine();
+    if (ImGui::Button("清空", ImVec2(100 * dpi, 0))) w.runArgs[0] = 0;
+    ImGui::EndPopup();
+}
+
+void drawAboutPopup(float dpi) {
+    if (!ImGui::BeginPopupModal("关于 Easel", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    const WB&   w = wb();
+    std::string text = versionLine() + "\n程序 " + exePath() + "\nEasel 源码 " +
+                       (w.easelDir.empty() ? std::string("(没找到)") : w.easelDir);
+    ImGui::TextUnformatted(text.c_str());
+    ImGui::Spacing();
+    ImGui::TextDisabled("更详细的环境情况：帮助菜单里的「环境自检」");
+    ImGui::Spacing();
+    if (ImGui::Button("复制", ImVec2(100 * dpi, 0))) ImGui::SetClipboardText(text.c_str());
+    ImGui::SameLine();
+    if (ImGui::Button("关闭", ImVec2(100 * dpi, 0))) ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+}
+
+// ---------------------------------------------------------------- 主界面
+// 三段式（工程 → 运行 → 结论）+ 输出区。紧凑模式就是把最后一段收起来，骨架是同一套。
+void draw(const Rect& r, const Theme& th, float dpi) {
+    WB& w = wb();
+    trackGeometry(dpi);
+    ImGui::SetNextWindowPos(ImVec2((float)r.x, (float)r.y));
+    ImGui::SetNextWindowSize(ImVec2((float)r.w, (float)r.h));
+    ImGui::Begin("##wb", nullptr,
+                 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus |
+                     ImGuiWindowFlags_MenuBar);
+
+    drawMenuBar(dpi);
+    drawProjectBar(th, dpi);
+    drawActionArea(th, dpi);
+    drawSummary(th, dpi);
+
+    UiState st = uiState();
+    if (w.compact) {
+        // 只有失败时才自动长高把错误露出来；成功 / 空闲收回原高度
+        bool wantGrow = (st == StFail);
+        if (wantGrow != w.grown) {
+            w.grown = wantGrow;
+            w.fitFrames = 3;
+        }
+        if (w.grown) drawErrorPeek(th);
+        // 窗口高度贴着内容走：画完最后一段，光标停在哪儿就该多高
+        fitCompactHeight(dpi, ImGui::GetCursorPosY() + ImGui::GetStyle().WindowPadding.y);
+    } else {
+        drawLogPane(th, dpi);
+    }
+
+    // 对话框：菜单里只置旗标，菜单收起来之后才 OpenPopup（不然 popup 开在菜单的 ID 栈里）
+    if (w.openNewProject) {
+        ImGui::OpenPopup("新建工程");
+        w.openNewProject = false;
+    }
+    if (w.openExportApp) {
+        ImGui::OpenPopup("导出应用程序");
+        w.openExportApp = false;
+    }
+    if (w.openExportProject) {
+        ImGui::OpenPopup("导出工程");
+        w.openExportProject = false;
+    }
+    if (w.openRunArgs) {
+        ImGui::OpenPopup("运行参数");
+        w.openRunArgs = false;
+    }
+    if (w.openAbout) {
+        ImGui::OpenPopup("关于 Easel");
+        w.openAbout = false;
+    }
+    drawNewProjectPopup(dpi);
+    drawExportAppPopup(dpi);
+    drawExportProjectPopup(dpi);
+    drawRunArgsPopup(dpi);
+    drawAboutPopup(dpi);
 
     ImGui::End();
 }
@@ -1462,8 +2447,9 @@ void draw(const Rect& r, const Theme& th, float dpi) {
 // 被自己的未知参数检查挡掉。
 // 带值的：后面紧跟一个词是它的值（--new <目录>），也可以写成 --new=<目录>
 const char* const kValueFlags[] = {"new",   "name",       "example", "build",  "run",
-                                   "package", "export",   "out",     "args",   "seed",
-                                   "frames",  "screenshot", "fps",   "warmup", "open", "case"};
+                                   "package", "export",   "clean",   "out",    "args",
+                                   "seed",    "frames",   "screenshot", "fps", "warmup",
+                                   "open",    "case"};
 // 不带值的开关
 const char* const kBoolFlags[] = {"help", "version", "json",  "verbose", "tests", "full",
                                   "doctor", "quiet", "debug", "solve"};
@@ -1489,9 +2475,10 @@ std::string usageText(const std::string& prog) {
            "命令（选一个，都不开窗口）：\n"
            "  --new <放哪的目录>      新建一个工程，配合 --name / --full / --example / --tests\n"
            "  --build <工程目录>      编译这个工程\n"
-           "  --run <工程目录>        编译并运行，配合 --args \"...\" 给作品传参数\n"
-           "  --package <工程目录>    生成可以直接发给别人的 exe / .app\n"
+           "  --run <工程目录>        运行：编译后把作品跑起来，配合 --args \"...\" 给作品传参数\n"
+           "  --package <工程目录>    导出应用程序：编一个能直接发给别人双击运行的版本\n"
            "  --export <工程目录>     导出一份能独立编译的完整源码工程，配合 --out\n"
+           "  --clean <工程目录>      清理：删掉这个工程的构建产物（不动 dist/，也不动你的代码）\n"
            "  --doctor                打印环境自检（Easel 在哪、编译器、cmake、字体…）\n"
            "  -h, --help              打印这份用法\n"
            "  -V, --version           打印版本\n"
@@ -1505,7 +2492,7 @@ std::string usageText(const std::string& prog) {
            "  --args \"<参数>\"         --run 用：原样传给作品的命令行参数\n"
            "  --out <目录>            --export 用：导到哪儿（默认 <工程>/dist/<名字>）\n"
            "  --json                  机器可读输出：stdout 上只有一条 JSON（配合 --build /\n"
-           "                          --run / --package / --export）\n"
+           "                          --run / --package / --export / --clean）\n"
            "  --verbose               多打一截排障细节（PATH、候选路径、工具链探测过程）\n"
            "\n"
            "例子：\n"
@@ -1614,12 +2601,16 @@ int main(int argc, char** argv) {
         }
     }
     App app(argc, argv);
-    app.title("Easel").size(1100, 720).theme(Theme::Forest()).editorEnabled(false)
+    // 默认 960x600（docs/ui-design.md 4.1）。上次的尺寸在 loadConfig() 之后再覆盖进去——
+    // 那时候才知道存了什么。
+    app.title("Easel").size(M::kWinW, M::kWinH).theme(Theme::Forest()).editorEnabled(false)
        .debugConsoleEnabled(false)    // 工具类程序不需要调试台
        .idleThrottle(true)            // 界面静止的时候（没人点、也没有子进程在编译/跑）降到 10 帧省电
        .busyWhen([]{ return wb().proc.running(); });   // 编译/运行中也保持满帧
-    app.statusBar(true);
-    internal::setVerbose(cli::args().has("verbose"));   // --verbose；GUI 的「详细」勾选也改它
+    // 底部状态栏关掉：它的「状态灯 + 状态文字」和摘要行是同一件事的两份事实来源，
+    // 缩放倍数对工具类程序也没意义。状态只由摘要行说（docs/ui-design.md 4.1）。
+    app.statusBar(false);
+    internal::setVerbose(cli::args().has("verbose"));   // --verbose；GUI 的「详细输出」也改它
 
     WB& w = wb();
     // easelDir 解析：复用 --doctor 横幅那条路（editorPaths()，resolvePaths() 已经把
@@ -1644,6 +2635,10 @@ int main(int argc, char** argv) {
             w.easelDir = joinPath(tc.kit, "easel");
     }
     loadConfig();
+    // 上次的窗口尺寸。位置要等窗口真的起来之后再看「现在还看得见吗」（onStart 里）。
+    // 尺寸的上限不在这儿管——src/backend.cpp 的 computeWindowGeometry() 会把它等比夹进
+    // 显示器可用区域，这里再夹一遍就是第二份实现（docs/ui-design.md 4.5）。
+    app.size(w.compact ? M::kCompactW : w.fullW, w.compact ? M::kMinCompactH : w.fullH);
 
     // 新建工程对话框的「骨架」下拉里，示例那几项：扫 <easelDir>/examples 下每个带 main.cpp 的子目录
     if (!w.easelDir.empty()) {
@@ -1685,7 +2680,8 @@ int main(int argc, char** argv) {
     // app.run() 之前处理，处理完直接 return，不开窗口）。见上面 headless:: 里的注释。
     bool jsonOut = cli::args().has("json");
     bool headlessCmd = cli::args().has("build") || cli::args().has("run") ||
-                       cli::args().has("package") || cli::args().has("export");
+                       cli::args().has("package") || cli::args().has("export") ||
+                       cli::args().has("clean");
     if (headlessCmd) {
         // App 的构造函数已经无条件装好了日志钩子（installHooks(false)，给调试台用），
         // 装上之后 EASEL_LOG 一律经 hookLog -> writeThrough 直通终端，不再看 quiet()。
@@ -1699,20 +2695,67 @@ int main(int argc, char** argv) {
     if (cli::args().has("run")) return headless::cmdRun(cli::args().str("run"), jsonOut);
     if (cli::args().has("package")) return headless::cmdPackage(cli::args().str("package"), jsonOut);
     if (cli::args().has("export")) return headless::cmdExport(cli::args().str("export"), jsonOut);
+    if (cli::args().has("clean")) return headless::cmdClean(cli::args().str("clean"), jsonOut);
 
     if (!cli::args().at(0).empty()) useProject(absPath(cli::args().at(0)));
 
     // 工作台一启动就打启动横幅，在输出区最上面——查问题时第一眼就看得到用的是哪个
     // Easel、哪份预编译、编译器/cmake/ninja 在哪儿（D-新，第 1 部分）。
-    w.verboseUI = internal::verbose();
+    // 「详细输出」：命令行 --verbose 优先，其次用上次记下来的（loadConfig 读的那一项）
+    if (cli::args().has("verbose")) w.verboseUI = true;
+    internal::setVerbose(w.verboseUI);
     beginLog();
     w.status = w.projectDir.empty() ? "先新建一个工程，或者打开一个已有的" : "工程：" + baseName(w.projectDir);
 
+    // 文档 / 排障用的启动钩子（不是给学生的功能，所以不占一个命令行参数）：
+    //   EASEL_WB_ARGS=…        启动时把运行参数填进去（等价于「设置 → 运行参数…」里手填）
+    //   EASEL_WB_AUTORUN=…     启动后自动点一次某个菜单项 / 按钮：
+    //                          run（运行）、clean（清理）、doctor（环境自检）、new（新建工程…）、
+    //                          exportapp（导出应用程序…）、exportproject（导出工程…）、
+    //                          runargs（运行参数…）、about（关于 Easel）
+    // 截图和冒烟测试靠它把界面开到某个状态，不用人动手，也不往界面里塞假数据。
+    if (const char* a = std::getenv("EASEL_WB_ARGS")) std::snprintf(w.runArgs, sizeof w.runArgs, "%s", a);
+    std::string autorun;
+    if (const char* act = std::getenv("EASEL_WB_AUTORUN")) autorun = act;
+
+    app.onStart([&app, autorun] {
+        float dpi = (float)app.dpiScale();
+        // 窗口起来了才能问 glfw：上次的位置在现在这套显示器上还看得见吗（看不见就不还原）
+        restoreWindowPos();
+        applyAlwaysOnTop();
+        applySizeLimits(dpi);
+        if (wb().compact) wb().fitFrames = 3;   // 紧凑模式：第一帧之后把高度贴合内容
+        WB& w2 = wb();
+        if (autorun == "run") {
+            runOrRerun();
+        } else if (autorun == "clean") {
+            doClean();
+        } else if (autorun == "doctor") {
+            runDoctor(dpi);
+        } else if (autorun == "new") {
+            if (!w2.newParent[0])
+                std::snprintf(w2.newParent, sizeof w2.newParent, "%s", defaultProjectsDir().c_str());
+            w2.openNewProject = true;
+        } else if (autorun == "exportapp") {
+            w2.openExportApp = true;
+        } else if (autorun == "exportproject") {
+            std::snprintf(w2.exportOutDir, sizeof w2.exportOutDir, "%s",
+                          joinPath(joinPath(w2.projectDir, "dist"), baseName(w2.projectDir)).c_str());
+            w2.openExportProject = true;
+        } else if (autorun == "runargs") {
+            w2.openRunArgs = true;
+        } else if (autorun == "about") {
+            w2.openAbout = true;
+        }
+    });
     app.onFrame([](double) { pump(); });
     app.onWindow([&app](const Rect& r) { draw(r, app.theme(), (float)app.dpiScale()); });
     app.onKey([](Key key) {
-        if (key == Key::F5) compileAndRun();
+        // F5 永远是「让我看见我的作品」：作品正在跑就是重跑（docs/ui-design.md 2.2）
+        if (key == Key::F5) runOrRerun();
     });
-    app.status("Easel");
-    return app.run();
+
+    int rc = app.run();
+    saveConfig();   // 窗口几何每帧只记在内存里（trackGeometry），退出时才写一次盘
+    return rc;
 }
