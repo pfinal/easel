@@ -27,6 +27,25 @@ inline Vec2   ev(const ImVec2& v) { return {(double)v.x, (double)v.y}; }
 // ---------------------------------------------------------------- 主题
 void applyTheme(const Theme& t);
 
+// ---------------------------------------------------------------- 像素密度（DPI 缩放）
+// 名字对齐 Processing / p5.js：pixelDensity() 是「强制指定缩放倍数」，displayDensity()
+// 是「读显示器探测到的原始值」——这两个概念前人已经起好名字了，不用自己发明。
+// --pixel-density N：命令行开关，覆盖显示器探测到的缩放。重拍文档截图这种「不管在哪台
+// 机器、接的是什么显示器，出来的图都要是同一个像素尺寸」的场景，缩放跟着显示器走
+// （原来 100% 就是这样）就做不到这件事。
+// backend::init()（建窗口用的尺寸）和 App::run()（存 d.dpi，界面元素/字号都乘它）两处
+// 都要套用同一个值，不然会出现「窗口按 1 倍建、界面按 2 倍画」的错位——所以校验和取值
+// 都抽到这一个函数里，两处调用结果保证一致。校验本身（非正数/过大直接拒绝，呼应
+// --frames 的做法）在 App::run() 最前面做一次，ok==false 时直接报错退出（2），
+// backend::init() 那时候还没跑起来，看到的 ok 必然是 true。
+struct PixelDensityArg {
+    bool        given = false;  // 命令行给了 --pixel-density
+    bool        ok = true;      // 给的值合法；没给也是 true —— 没什么可拒绝的
+    float       value = 1.f;    // given && ok 时，这是解析出来、要用的那个值
+    std::string error;          // given 但 !ok 时，能直接打给学生看的一句话
+};
+PixelDensityArg pixelDensityArg();
+
 // ---------------------------------------------------------------- 后端
 namespace backend {
 bool        init(const char* title, int w, int h, bool visible, GLFWwindow** outWindow);

@@ -113,6 +113,75 @@ inline bool loadFboFunctions() { return true; }
 void glfwErrorCallback(int code, const char* desc) {
     EASEL_ERROR("GLFW 错误 %d: %s", code, desc ? desc : "?");
 }
+
+// ---------------------------------------------------------------- 窗口尺寸/位置
+// 两个后端（GL / DX11）创建窗口前后都要做同一件事：把「请求尺寸 × 显示器缩放」夹进
+// 屏幕可用区域，再把窗口摆到正中——不然高缩放的笔记本上，稍大一点的请求尺寸乘完缩放
+// 就比屏幕还大，糊到哪全看窗口管理器心情（这就是 Windows/Ubuntu 上窗口跑到屏幕外的
+// 根因）。抽成这两个函数，别在 GL/DX11 分支各写一份。
+struct WindowGeometry {
+    int  w = 1, h = 1;        // 建窗口时真正用的宽高（客户区，已经夹过）
+    bool centered = false;    // 拿到了显示器可用区域，之后可以调 centerWindow()；
+                               // 拿不到（没显示器 / 异常）就别再折腾位置，退化成老行为。
+};
+
+// mon 由调用方传入（通常是 glfwGetPrimaryMonitor() 的结果）——为 nullptr 时表示这台机器
+// 拿不到显示器信息（常见于无头 CI），直接退化成「缩放后原样返回，不夹不摆」，
+// 保证 --doctor 那条路不会因为这里崩掉或卡住。
+WindowGeometry computeWindowGeometry(GLFWmonitor* mon, int reqW, int reqH, float scale) {
+    WindowGeometry g;
+    g.w = std::max(1, (int)(reqW * scale));
+    g.h = std::max(1, (int)(reqH * scale));
+    if (!mon) return g;
+
+    int mx = 0, my = 0, mw = 0, mh = 0;
+    glfwGetMonitorWorkarea(mon, &mx, &my, &mw, &mh);   // 可用区域：排除任务栏/Dock/菜单栏，
+                                                        // 比 glfwGetVideoMode 的整块屏幕准。
+    if (mw <= 0 || mh <= 0) return g;   // 拿到的数据不像话，同样老实退化
+
+    // 四周各留 8% 的边距：贴着屏幕边缘摆会显得窗口和屏幕一样大、很挤，也没给窗口管理器
+    // 自己的吸附/阴影留位置；8% 在常见分辨率下留出的边距一眼能看出来，又不会让窗口显得
+    // 特别小——纯拍的经验值，不是什么精确计算。
+    const float kMarginRatio = 0.08f;
+    int maxW = std::max(1, (int)(mw * (1.f - 2 * kMarginRatio)));
+    int maxH = std::max(1, (int)(mh * (1.f - 2 * kMarginRatio)));
+
+    if (g.w > maxW || g.h > maxH) {
+        // 两边一起按同一个比例缩，不分别夹宽、夹高：分别夹会把宽高比拉歪（比如学生一块
+        // 正方形画布被夹成长条），画面里的图形跟着变形，比「整体缩小一点」更容易让人
+        // 摸不着头脑。等比缩放只是变小，形状还是原来那个样子。
+        float k = std::min((float)maxW / g.w, (float)maxH / g.h);
+        g.w = std::max(1, (int)(g.w * k));
+        g.h = std::max(1, (int)(g.h * k));
+    }
+    g.centered = true;
+    return g;
+}
+
+// 把已经建好的窗口摆到 mon 可用区域正中。win 的客户区尺寸就用 computeWindowGeometry()
+// 算出来的那份（这里直接问 glfwGetWindowSize 拿现值，不用再传一次）。
+// 关键点：glfwSetWindowPos 摆的是**客户区**左上角，但窗口还带标题栏/边框，得用
+// glfwGetWindowFrameSize() 把四边装饰的厚度找出来，连着客户区一起居中——否则算出来的
+// 位置会让标题栏被顶到屏幕上沿外面（尤其窗口高度接近可用区域高度时）。
+// mon 为 nullptr（没显示器信息）时什么都不做，交给窗口管理器用默认位置摆。
+void centerWindow(GLFWwindow* win, GLFWmonitor* mon) {
+    if (!win || !mon) return;
+    int mx = 0, my = 0, mw = 0, mh = 0;
+    glfwGetMonitorWorkarea(mon, &mx, &my, &mw, &mh);
+    if (mw <= 0 || mh <= 0) return;
+
+    int cw = 0, ch = 0;
+    glfwGetWindowSize(win, &cw, &ch);
+    int left = 0, top = 0, right = 0, bottom = 0;
+    glfwGetWindowFrameSize(win, &left, &top, &right, &bottom);
+    // 有些平台（比如还没显示过一次的 X11 窗口）这时候装饰厚度问出来是 0——退化成只按
+    // 客户区居中，比完全不摆好，也不会把窗口挪出屏幕，只是标题栏可能没对得那么准。
+    int fullW = cw + left + right;
+    int fullH = ch + top + bottom;
+    int fx = mx + (mw - fullW) / 2;
+    int fy = my + (mh - fullH) / 2;
+    glfwSetWindowPos(win, fx + left, fy + top);   // +left/+top：把装饰厚度加回客户区坐标
+}
 }  // namespace
 
 const char* name() {
@@ -150,12 +219,26 @@ bool init(const char* title, int w, int h, bool visible, GLFWwindow** outWindow)
     glfwSetErrorCallback(glfwErrorCallback);
     if (!glfwInit()) return false;
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);   // DX11 自己管理绘制
-    glfwWindowHint(GLFW_VISIBLE, visible ? GLFW_TRUE : GLFW_FALSE);
+    // 先隐藏着建：摆好位置之后再按 visible 决定要不要显示，免得用户看见窗口先冒在
+    // 别处、下一瞬间又跳到正中间。
+    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
     ImGui::CreateContext();
     ImPlot::CreateContext();
-    float scale = ImGui_ImplGlfw_GetContentScaleForMonitor(glfwGetPrimaryMonitor());
-    g_window = glfwCreateWindow((int)(w * scale), (int)(h * scale), title, nullptr, nullptr);
+
+    GLFWmonitor* mon = glfwGetPrimaryMonitor();   // 没显示器（无头环境）时是 nullptr，
+                                                   // 下面全部函数都对它做了 null 检查。
+    float scale = mon ? ImGui_ImplGlfw_GetContentScaleForMonitor(mon) : 1.f;
+    if (scale <= 0.f) scale = 1.f;
+    // --pixel-density 给了就用给的，覆盖探测到的缩放——App::run() 存 d.dpi 时也要套用
+    // 同一个值（见 internal::pixelDensityArg() 的注释），不然界面按一个缩放画，窗口按
+    // 另一个缩放建，两边对不上。合法性已经在 App::run() 最前面查过（不合法直接退出码 2，
+    // 走不到这里），这里的 pd.ok 必然是 true。
+    if (PixelDensityArg pd = pixelDensityArg(); pd.given && pd.ok) scale = pd.value;
+    WindowGeometry geo = computeWindowGeometry(mon, w, h, scale);
+    g_window = glfwCreateWindow(geo.w, geo.h, title, nullptr, nullptr);
     if (!g_window) { glfwTerminate(); return false; }
+    if (geo.centered) centerWindow(g_window, mon);
+    if (visible) glfwShowWindow(g_window);
 
     HWND                 hwnd = glfwGetWin32Window(g_window);
     DXGI_SWAP_CHAIN_DESC sd{};
@@ -307,19 +390,31 @@ bool init(const char* title, int w, int h, bool visible, GLFWwindow** outWindow)
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
 #endif
     glfwWindowHint(GLFW_SCALE_TO_MONITOR, GLFW_TRUE);
-    glfwWindowHint(GLFW_VISIBLE, visible ? GLFW_TRUE : GLFW_FALSE);
+    // 先隐藏着建：摆好位置之后再按 visible 决定要不要显示，免得用户看见窗口先冒在
+    // 别处、下一瞬间又跳到正中间。
+    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
 
     ImGui::CreateContext();
     ImPlot::CreateContext();
 
-    float scale = ImGui_ImplGlfw_GetContentScaleForMonitor(glfwGetPrimaryMonitor());
+    GLFWmonitor* mon = glfwGetPrimaryMonitor();   // 没显示器（无头环境）时是 nullptr，
+                                                   // 下面全部函数都对它做了 null 检查。
+    float scale = mon ? ImGui_ImplGlfw_GetContentScaleForMonitor(mon) : 1.f;
     if (scale <= 0.f) scale = 1.f;
-    g_window = glfwCreateWindow((int)(w * scale), (int)(h * scale), title, nullptr, nullptr);
+    // --pixel-density 给了就用给的，覆盖探测到的缩放——App::run() 存 d.dpi 时也要套用
+    // 同一个值（见 internal::pixelDensityArg() 的注释），不然界面按一个缩放画，窗口按
+    // 另一个缩放建，两边对不上。合法性已经在 App::run() 最前面查过（不合法直接退出码 2，
+    // 走不到这里），这里的 pd.ok 必然是 true。
+    if (PixelDensityArg pd = pixelDensityArg(); pd.given && pd.ok) scale = pd.value;
+    WindowGeometry geo = computeWindowGeometry(mon, w, h, scale);
+    g_window = glfwCreateWindow(geo.w, geo.h, title, nullptr, nullptr);
     if (!g_window) {
         EASEL_ERROR("创建窗口失败：显卡驱动可能不支持 OpenGL 3。Windows 上可以试 -DEASEL_BACKEND=dx11");
         glfwTerminate();
         return false;
     }
+    if (geo.centered) centerWindow(g_window, mon);
+    if (visible) glfwShowWindow(g_window);
     glfwMakeContextCurrent(g_window);
     glfwSwapInterval(1);
 

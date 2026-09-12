@@ -166,6 +166,7 @@ struct App::Impl {
     Color       bg;
     float       panelW = 340.f;
     float       dpi = 1.f;
+    bool        dpiFromCli = false;   // true = --pixel-density 指定的；false = 探测到的
     Camera      cam;
     Canvas      canvas;
 
@@ -249,6 +250,11 @@ std::string appUsage(const std::string& prog) {
            "  --screenshot <png>  退出前把最后一帧存成 PNG（和 --frames 一起用）\n"
            "  --warmup N          进主循环之前先空转 N 帧：只调 onFrame(dt)，dt 固定 1/60，不渲染\n"
            "  --fps N             帧率上限，0 = 不限制（覆盖代码里 frameRate() 设的值）\n"
+           "  --pixel-density N   强制指定缩放倍数（0 < N ≤ 8），覆盖显示器探测到的值；\n"
+           "                      不给就用探测到的（--doctor 里能看到当前用的是哪个来源）。\n"
+           "                      名字对齐 Processing/p5：pixelDensity() 强制指定，\n"
+           "                      displayDensity() 读探测到的原始值。重拍文档截图、\n"
+           "                      换显示器也要保持同一个像素尺寸时用得上。\n"
            "  --seed N            固定随机种子（不给的话每次都不一样，用的种子会打在日志第一行）\n"
            "  --quiet             EASEL_LOG / EASEL_TRACE 不往终端刷屏\n"
            "  --debug             启动就把 F12 调试台打开\n"
@@ -263,6 +269,7 @@ std::string appUsage(const std::string& prog) {
            "  " + p + " --frames 1 --screenshot shot.png          画一帧、存图、退出\n"
            "  " + p + " --warmup 600 --frames 1 --screenshot late.png   先空转 600 帧再截图\n"
            "  " + p + " --doctor                                  环境自检\n"
+           "  " + p + " --pixel-density 2 --frames 1 --screenshot shot.png   强制按 2 倍缩放截图\n"
            "\n"
            "作品自己的参数不在这张表里，但照样能用，也不会被拒绝：\n"
            "  cli::args().num(\"pad\", 40) / .str(\"file\") / .has(\"fast\")\n";
@@ -474,6 +481,30 @@ std::string prebuiltRoot(const std::string& easelDir) {
 
 }  // namespace
 
+// --pixel-density 的取值 + 合法性检查——见 internal.h 里 PixelDensityArg 的注释：
+// backend::init() 和下面 App::run() 存 d.dpi 都调它，保证「给了就用给的」这件事两处
+// 判断一致。8 这个上限是拍的：常见操作系统缩放顶多到 300%（3.0），10 这种数字基本是
+// 打错了或者想问「到底能给多大」，直接拒绝比静默建一个荒唐大/小的窗口更明确。
+PixelDensityArg pixelDensityArg() {
+    PixelDensityArg a;
+    if (!cli::args().has("pixel-density")) return a;
+    a.given = true;
+    const double kMax = 8.0;
+    double       v = cli::args().real("pixel-density", 0.0);
+    if (!(v > 0.0) || v > kMax) {
+        char buf[192];
+        std::snprintf(buf, sizeof buf,
+                      "--pixel-density 要一个大于 0、不超过 %.0f 的数，给的是 %s。"
+                      "不给这个参数就用显示器探测到的缩放（Processing/p5 里叫 displayDensity()）。",
+                      kMax, cli::args().str("pixel-density").c_str());
+        a.ok = false;
+        a.error = buf;
+        return a;
+    }
+    a.value = (float)v;
+    return a;
+}
+
 // 版本那一行：banner() 的第一行，也是 `easel --version` 打的那一行。单独拎出来是因为
 // EASEL_GIT_SHA / EASEL_ABI / EASEL_BUILT_WITH 这三个宏是 easel 这个 target 私有的
 // （见根 CMakeLists.txt 的 target_compile_definitions），workbench/main.cpp 里看不见，
@@ -551,7 +582,8 @@ std::string App::doctor() const {
     o << "  ---- 图形 ----\n";
     o << "  渲染后端    : " << internal::backend::name() << "\n";
     o << "  显卡        : " << internal::backend::gpu() << "\n";
-    o << "  DPI 缩放    : " << p_->dpi << "\n";
+    o << "  DPI 缩放    : " << p_->dpi
+      << (p_->dpiFromCli ? "（--pixel-density 指定）" : "（探测到的，displayDensity()）") << "\n";
     o << "  窗口        : " << p_->w << " x " << p_->h << "\n";
     {
         std::string g = internal::linuxGraphicsDevStatus();
@@ -779,6 +811,14 @@ int App::run() {
         return 2;
     }
 
+    // --pixel-density N：非正数/过大直接拒绝（跟上面 --frames 一个做法），别静默接受一个
+    // 荒唐值再建出一扇挤成一团或者大得离谱的窗口。合法性只在这里查一次——backend::init()
+    // 和下面存 d.dpi 都调同一个 internal::pixelDensityArg()，看到的 ok 必然是 true。
+    if (internal::PixelDensityArg pd = internal::pixelDensityArg(); pd.given && !pd.ok) {
+        EASEL_ERROR("%s", pd.error.c_str());
+        return 2;
+    }
+
     // --export：不开窗口，导完就走。CI 拿它验「导出的工程真的能独立编译」。
     if (cli::args().has("export")) {
         std::string where = cli::args().str("export");
@@ -829,6 +869,13 @@ int App::run() {
 
     d.dpi = ImGui_ImplGlfw_GetContentScaleForMonitor(glfwGetPrimaryMonitor());
     if (d.dpi <= 0.f) d.dpi = 1.f;
+    // --pixel-density 给了就用给的，覆盖探测到的值——backend::init() 建窗口时乘的也是
+    // 这同一个数（见 internal::pixelDensityArg()），不然会出现「窗口按探测到的缩放建，
+    // 界面按命令行指定的缩放画」这种错位。合法性已经在 run() 最前面查过，这里不用再查。
+    if (internal::PixelDensityArg pd = internal::pixelDensityArg(); pd.given) {
+        d.dpi = pd.value;
+        d.dpiFromCli = true;
+    }
     internal::applyTheme(d.theme);
     ImGui::GetStyle().ScaleAllSizes(d.dpi);
     ImGui::GetStyle().FontScaleDpi = d.dpi;
