@@ -16,6 +16,8 @@
 #    include <unistd.h>
 #    if defined(__APPLE__)
 #        include <mach-o/dyld.h>
+#    elif defined(__linux__)
+#        include <dlfcn.h>
 #    endif
 #endif
 
@@ -164,6 +166,25 @@ std::string formatStamp(double seconds) {
     char buf[32];
     std::snprintf(buf, sizeof buf, "[%5.1fs] ", seconds);
     return buf;
+}
+
+// 摘一段文本最后几行非空内容。「编译失败，但一个错误/警告都没有」时的兜底摘要用
+// 它——这类失败（构建系统本身起不来、链接器报的东西没被 parseDiagnostic 认出来）
+// 没有诊断可指，光说「点红色那行」等于让人点空气；好过什么都不给的是把原始输出
+// 结尾摆出来，好歹让人看到卡在哪。workbench（GUI + 无头命令）和编辑栏的编译失败
+// 摘要共用这一份实现，不各写一遍。
+std::vector<std::string> tailNonEmptyLines(const std::string& text, size_t n) {
+    std::vector<std::string> lines;
+    size_t                    start = 0;
+    while (start <= text.size()) {
+        size_t      nl = text.find('\n', start);
+        std::string line = text.substr(start, (nl == std::string::npos ? text.size() : nl) - start);
+        if (!line.empty()) lines.push_back(line);
+        if (nl == std::string::npos) break;
+        start = nl + 1;
+    }
+    if (lines.size() > n) lines.erase(lines.begin(), lines.end() - n);
+    return lines;
 }
 
 // ---------------------------------------------------------------- 找编译器
@@ -353,6 +374,63 @@ std::string toolchainVersion() {
     if (!runBlocking({tc.cxx, "--version"}, {}, 2000, &out, &code)) return {};
     size_t nl = out.find('\n');
     return nl == std::string::npos ? out : out.substr(0, nl);
+}
+
+// --doctor 在 Linux 上多查一项：图形相关的 -dev 包在不在。「解压就能跑」不等于「编译
+// 能过」——发布包只带 libGL.so.1 这些带版本号的运行时共享库，链接期编译器要找的是
+// 不带版本号的 .so 符号链接，只有装了 -dev 包才有。dlopen 试一下就知道，不新增依赖
+// （不用 shell 出去跑 dpkg -l，那个在有些发行版上没有）。
+//
+// 查什么要跟 CMake 真正会去找的东西对齐，否则会给出假的「都在」：FindOpenGL 找的是
+// OPENGL_opengl_LIBRARY（libOpenGL.so，来自 libopengl-dev）、OPENGL_glx_LIBRARY
+// （libGLX.so，来自 libglx-dev）和 OPENGL_INCLUDE_DIR（GL/gl.h）。只查 libGL.so 不够
+// ——libGL.so 由 libgl-dev 提供，它可能装着而另外那几个没装，那时这里报「都在」、
+// cmake 照样失败，比不查更糟。GTK
+// 那部分没有等价的「无版本号 .so」可 dlopen（gtk+-3.0 是纯 pkg-config 概念），只能
+// 靠 pkg-config；pkg-config 自己都没找到就说「没法确认」，不当成「缺」，别吓错人。
+// 这样能在真编译之前（--doctor）就发现缺依赖，而不是等新建工程点「编译」才炸出一段
+// 看不懂的 CMake 报错——见 D-新 第 2 部分 workbench/main.cpp 的 detectMissingLinuxDeps()，
+// 包名清单跟这里、跟 .github/workflows/ci.yml 是同一份，改一处都要三处一起改。
+// 非 Linux 直接返回空——doctor() 那边空串就跳过这一行，不在 macOS / Windows 上添乱。
+std::string linuxGraphicsDevStatus() {
+#if defined(__linux__)
+    auto canDlopen = [](const char* name) {
+        void* h = dlopen(name, RTLD_LAZY);
+        if (h) dlclose(h);
+        return h != nullptr;
+    };
+    auto hasHeader = [](const char* rel) {
+        for (const char* root : {"/usr/include/", "/usr/local/include/"})
+            if (existsU8(std::string(root) + rel)) return true;
+        return false;
+    };
+    // 跟 FindOpenGL / FindX11 对齐：库的无版本号符号链接 + 头文件，缺一不可。
+    bool hasGL = canDlopen("libOpenGL.so") && canDlopen("libGLX.so") && hasHeader("GL/gl.h");
+    bool hasX11 = canDlopen("libX11.so") && hasHeader("X11/Xlib.h");
+
+    std::string gtkNote;
+    {
+        std::string out;
+        int         code = -1;
+        if (runBlocking({"pkg-config", "--exists", "gtk+-3.0"}, {}, 2000, &out, &code))
+            gtkNote = (code == 0) ? "有" : "没有";
+        else
+            gtkNote = "没法确认（没找到 pkg-config）";
+    }
+
+    std::string missing;
+    if (!hasGL) missing += "OpenGL ";
+    if (!hasX11) missing += "X11 ";
+    if (gtkNote == "没有") missing += "GTK ";
+    if (missing.empty())
+        return "都在（OpenGL/X11 齐了，GTK " + gtkNote + "）";
+    return "缺 " + missing +
+           "—— sudo apt-get update && sudo apt-get install -y libgl1-mesa-dev libx11-dev "
+           "libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxkbcommon-dev "
+           "libgtk-3-dev ninja-build";
+#else
+    return {};
+#endif
 }
 
 }  // namespace internal

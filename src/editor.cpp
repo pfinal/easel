@@ -543,6 +543,20 @@ void editorPump() {
                           e.warnings ? ("，" + std::to_string(e.warnings) + " 个警告").c_str() : "");
             addSys(e, buf);
             startRun(e);
+        } else if (e.errors == 0 && e.warnings == 0) {
+            // 一个错误/警告都没有：g++ 没吐出能认出来的诊断（比如链接失败），
+            // 「点上面红色那行」没有行可点。把原始输出（不算我们自己打的那些行）
+            // 结尾摆出来，好过什么都不给。
+            char buf[192];
+            std::snprintf(buf, sizeof buf, "编译失败（%.1f 秒），但没有具体的错误/警告可以点——"
+                                           "这类失败通常不是代码本身的问题。原始输出最后几行：",
+                          secs);
+            addOut(e, buf, KindError);
+            std::string rawTail;
+            for (const OutLine& o : e.out)
+                if (o.kind == KindPlain) rawTail += o.text + "\n";
+            for (const std::string& l : tailNonEmptyLines(rawTail, 6)) addOut(e, l, KindPlain);
+            e.stage = StageIdle;
         } else {
             char buf[160];
             std::snprintf(buf, sizeof buf, "编译失败：%d 个错误、%d 个警告（%.1f 秒）。点上面红色那行跳过去。",

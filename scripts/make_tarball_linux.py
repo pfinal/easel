@@ -92,24 +92,129 @@ easel/docs/cheatsheet.md 里）：
 前置条件（Ubuntu / Debian 系；其它发行版按包管理器换等价包名）：
 
 1. 只是先跑跑看、看看画面（不编译任何东西）——需要下面这些**运行时**共享库
-   （多数带桌面环境的机器上早就装好了，只有精简安装 / 容器 / 服务器版才要手动装）：
-       sudo apt-get install -y libgl1 libx11-6 libxrandr2 libxinerama1 \\
-           libxcursor1 libxi6 libxkbcommon0 libgtk-3-0
+   （多数带桌面环境的机器上早就装好了，只有精简安装 / 容器 / 服务器版才要手动装）。
+   **先 `apt-get update` 再 `install`**——本地索引比已装的运行时库旧的话（比如系统
+   装的是 `-updates` 里的新版本），跳过 update 直接装会撞上一堆解不开的版本依赖：
+       sudo apt-get update && sudo apt-get install -y libgl1 libx11-6 libxrandr2 \\
+           libxinerama1 libxcursor1 libxi6 libxkbcommon0 libgtk-3-0
 
 2. 要编译（新建工程之后「编译并运行」，哪怕链的是包里带的预编译库，链接这一步
    仍然要在本机核对 OpenGL / X11 / GTK 这些库存不存在）——需要下面这些
    **-dev** 包（比运行时那份多了链接用的无版本号 .so，装完才能跟其它平台一样
-   几秒钟链上，不用等三分钟从源码编）：
-       sudo apt-get install -y g++ cmake libgl1-mesa-dev libx11-dev libxrandr-dev \\
-           libxinerama-dev libxcursor-dev libxi-dev libxkbcommon-dev libgtk-3-dev
+   几秒钟链上，不用等三分钟从源码编）。同样先 update 再装：
+       sudo apt-get update && sudo apt-get install -y g++ cmake libgl1-mesa-dev \\
+           libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \\
+           libxkbcommon-dev libgtk-3-dev
    `ninja-build` 可选（`sudo apt-get install -y ninja-build`）——没装的话生成的构建
    脚本会自动退回 Unix Makefiles，一样能编，只是快慢有点差别。
+
+以上两条命令要是装不上、报的是「依赖: … 但是 … 正要被安装」这种版本对不上的错，
+多半是软件源缺 `-updates` 仓库——查一下 /etc/apt/sources.list.d/ubuntu.sources 里
+`Suites:` 那一行有没有「你的版本代号-updates」（比如 Ubuntu 24.04 是 noble-updates）。
+
+想在应用菜单和桌面上有个图标（不用每次去翻目录找 bin/easel）：跑一下
+    ./install-desktop.sh
+（不用 sudo，只装到你自己的用户目录；`./install-desktop.sh --uninstall` 卸载。）
 
 新建的工程默认放在 ~/projects。
 
 包里的 easel/ 目录是给 Easel 自己用的源码树（bin/easel 靠它找到 dist/、模板、
 预编译库），不是给你改的地方——你的工程建在别处（比如 ~/projects），跟这份包
 本身分开。
+"""
+
+# 应用菜单入口 + 桌面快捷方式，装/卸都不需要 sudo（全在 ~/.local 和 ~/Desktop 下）。
+# 路径从脚本自己的位置反推（BASH_SOURCE），解压到哪都能用，不用改一个字。
+# .desktop 内容是照着在一台 Ubuntu 24.04 GNOME 上手工装过、确认能用的那份抄的。
+INSTALL_DESKTOP_SH = r"""#!/usr/bin/env bash
+# Easel —— 装一个应用菜单入口 + 图标 + 桌面快捷方式。不用 sudo：全装在
+# ~/.local/share 和 ~/Desktop 下。跟这份发布包解压到哪个目录没关系——
+# 路径从这个脚本自己所在的位置反推。
+#
+# 用法：
+#   ./install-desktop.sh              安装
+#   ./install-desktop.sh --uninstall  卸载（把下面装的几个文件删掉）
+#
+# 注意：.desktop 里的 Exec 是这次解压目录的绝对路径。如果之后把这个目录挪走
+# 或者改名，图标会打不开（或者打开的是旧路径），重新跑一次这个脚本就好。
+set -u
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+EXE="$ROOT/bin/easel"
+ICON_SRC="$ROOT/assets/easel-256.png"
+
+APP_DIR="$HOME/.local/share/applications"
+ICON_DIR="$HOME/.local/share/icons/hicolor/256x256/apps"
+DESKTOP_FILE="$APP_DIR/easel.desktop"
+ICON_FILE="$ICON_DIR/easel.png"
+
+refresh_caches() {
+    # 很多精简发行版根本没装这两个工具，找不到 / 跑失败都别让脚本因此退出。
+    update-desktop-database "$APP_DIR" >/dev/null 2>&1 || true
+    gtk-update-icon-cache "$HOME/.local/share/icons/hicolor" >/dev/null 2>&1 || true
+}
+
+desktop_dir() {
+    local d
+    d="$(xdg-user-dir DESKTOP 2>/dev/null || true)"
+    [ -n "$d" ] && [ -d "$d" ] && { echo "$d"; return; }
+    [ -d "$HOME/Desktop" ] && { echo "$HOME/Desktop"; return; }
+    echo ""
+}
+
+if [ "${1:-}" = "--uninstall" ]; then
+    rm -f "$DESKTOP_FILE" "$ICON_FILE"
+    d="$(desktop_dir)"
+    [ -n "$d" ] && rm -f "$d/easel.desktop"
+    refresh_caches
+    echo "卸载完成，删掉了："
+    echo "  $DESKTOP_FILE"
+    echo "  $ICON_FILE"
+    [ -n "$d" ] && echo "  $d/easel.desktop"
+    exit 0
+fi
+
+if [ ! -x "$EXE" ]; then
+    echo "找不到可执行文件：$EXE" >&2
+    echo "这个脚本得跟 bin/easel 待在同一个解压目录里，别单独拷出来跑。" >&2
+    exit 1
+fi
+
+mkdir -p "$APP_DIR" "$ICON_DIR"
+[ -f "$ICON_SRC" ] && cp -f "$ICON_SRC" "$ICON_FILE"
+
+cat > "$DESKTOP_FILE" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Easel
+Comment=写代码，看见它跑起来
+Exec=$EXE
+Icon=easel
+Terminal=false
+Categories=Development;IDE;
+StartupNotify=true
+EOF
+chmod +x "$DESKTOP_FILE"
+
+refresh_caches
+
+installed=("$DESKTOP_FILE")
+[ -f "$ICON_FILE" ] && installed+=("$ICON_FILE")
+
+d="$(desktop_dir)"
+if [ -n "$d" ]; then
+    cp -f "$DESKTOP_FILE" "$d/easel.desktop" 2>/dev/null && {
+        chmod +x "$d/easel.desktop"
+        # GNOME 默认把桌面上手动放的 .desktop 标成「不受信任」，得显式打个信任标记；
+        # gio 不在（没装 GLib 的命令行工具）就算了，不影响应用菜单那份。
+        gio set "$d/easel.desktop" metadata::trusted true >/dev/null 2>&1 || true
+        installed+=("$d/easel.desktop")
+    }
+fi
+
+echo "装好了："
+for f in "${installed[@]}"; do echo "  $f"; done
+echo "如果之后把这个目录挪走或者改名，重新跑一次这个脚本（Exec 是绝对路径）。"
 """
 
 
@@ -262,7 +367,7 @@ def main():
     shutil.rmtree(out_root, ignore_errors=True)
     os.makedirs(out_root)
 
-    print("=== 1/5 可执行文件 → bin/easel ===")
+    print("=== 1/6 可执行文件 → bin/easel ===")
     # 单放一个 bin/ 子目录，不跟包根平摆——包根还要放 easel/ 源码目录，Linux 上
     # 可执行文件没有 .exe 后缀，"easel"（文件）和 "easel"（目录）没法在同一层
     # 共存。摆进 bin/ 之后 exeDir() 是 <包根>/bin，往上翻一层就是包根，找到
@@ -273,16 +378,33 @@ def main():
     shutil.copy2(args.exe, exe_dest)
     os.chmod(exe_dest, 0o755)
 
-    print("=== 2/5 源码树 → easel/ ===")
+    print("=== 2/6 源码树 → easel/ ===")
     resources_easel = os.path.join(out_root, "easel")
     missing = copy_easel_tree(resources_easel)
     if missing:
         print(f"  （跳过不存在的：{', '.join(missing)}）")
 
-    print("=== 3/5 预编译包 → easel/prebuilt/ ===")
+    print("=== 3/6 预编译包 → easel/prebuilt/ ===")
     prebuilt_dir = os.path.join(resources_easel, "prebuilt")
     copy_prebuilt(args.prebuilt_dir, prebuilt_dir)
     print(f"    {dir_size(prebuilt_dir)/1e6:.0f} MB")
+
+    print("=== 4/6 桌面入口脚本 + 图标 ===")
+    # 摆在包根：跟 easel/ 那份源码树分开——install-desktop.sh 是给用户跑的工具，
+    # 不是 Easel 自己的源码，不该混进 easel/ 底下（那边 assets/ 是给学生工程/示例
+    # 用的资源，跟这里的应用图标是两码事，即使碰巧同一张图）。
+    icon_dest_dir = os.path.join(out_root, "assets")
+    os.makedirs(icon_dest_dir, exist_ok=True)
+    icon_src = os.path.join(ROOT, "assets", "easel-256.png")
+    if os.path.exists(icon_src):
+        shutil.copy2(icon_src, os.path.join(icon_dest_dir, "easel-256.png"))
+    else:
+        print("  （没找到 assets/easel-256.png，跳过图标，install-desktop.sh 还是会装，"
+              "只是没图标）")
+    install_sh = os.path.join(out_root, "install-desktop.sh")
+    with open(install_sh, "w", encoding="utf-8", newline="\n") as f:
+        f.write(INSTALL_DESKTOP_SH)
+    os.chmod(install_sh, 0o755)
 
     commit = git_commit(ROOT)
     # 直接抄 --prebuilt-dir 里 cmake --install 写的 easel-prebuilt.json 里的
@@ -295,7 +417,7 @@ def main():
     write_version_json(os.path.join(resources_easel, "VERSION.json"), commit, abi)
     print(f"  源码戳 → easel/VERSION.json（commit {commit or 'unknown'}，abi {abi}）")
 
-    print("=== 4/5 许可证 + README ===")
+    print("=== 5/6 许可证 + README ===")
     shutil.copy2(os.path.join(ROOT, "LICENSE"), os.path.join(out_root, "LICENSE.txt"))
     nlic = collect_licenses(os.path.join(out_root, "licenses"))
     print(f"  licenses/ 收了 {nlic} 份")
@@ -309,7 +431,7 @@ def main():
         print(f"好了：{out_root}")
         return 0
 
-    print("=== 5/5 打包（tar.gz）===")
+    print("=== 6/6 打包（tar.gz）===")
     tar_path = os.path.join(os.path.abspath(args.out), f"{name}.tar.gz")
     if os.path.exists(tar_path):
         os.remove(tar_path)

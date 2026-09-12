@@ -259,6 +259,9 @@ struct Toolchain {
 };
 const Toolchain& toolchain(bool refresh = false);
 std::string      toolchainVersion();     // 阻塞最多 2 秒，只在自检里调
+// Linux 上图形相关的 -dev 包在不在（OpenGL/X11 用 dlopen 探测无版本号的 .so，GTK 用
+// pkg-config）。App::doctor() 里那一行；非 Linux 返回空串。
+std::string      linuxGraphicsDevStatus();
 
 // ---------------------------------------------------------------- 启动横幅
 // 「这是哪个 Easel、哪份预编译、编到哪去了」，一眼说清楚——工作台启动时打在输出区
@@ -274,6 +277,9 @@ std::string versionLine();
 // 编译产物大小、每一步日志的时间戳都靠它们，workbench 和 doctor() 都用得到。
 std::string formatBytes(long long bytes);
 std::string formatStamp(double seconds);
+// 一段文本最后 n 行非空内容——「编译失败，但没有错误/警告可指」时的兜底摘要用
+// （workbench/main.cpp 的三处编译失败摘要 + src/editor.cpp 的 F5 编译失败摘要共用）。
+std::vector<std::string> tailNonEmptyLines(const std::string& text, size_t n);
 
 // ---------------------------------------------------------------- 详细模式
 // --verbose（命令行）或工作台输出区上方的「详细」勾选。默认关：编译日志已经够看了，

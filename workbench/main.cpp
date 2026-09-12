@@ -190,6 +190,20 @@ bool easelDirStale(const std::string& build, const std::string& easelDir) {
     return normEaselPath(cachedEaselDir(build)) != normEaselPath(easelDir);
 }
 
+// 一个构建目录是不是「真配置好了，能直接 --build」：光有 CMakeCache.txt 不够——
+// configure 失败（比如缺 OpenGL/X11/GTK 开发包）也会把 CMakeCache.txt 写出来，
+// 但生成器的构建文件（Makefiles 生成器是 Makefile，Ninja 生成器是 build.ninja）
+// 不会跟着生成。只查 CMakeCache.txt 的话，第一次 configure 失败之后这个构建目录
+// 就再也自己好不了——`cmake --build` 会直接撞「没有规则可制作目标 "Makefile"」，
+// 且没有任何提示告诉用户「删掉这个目录重来」。两种生成器都要认，两个都没有才
+// 说明真没配置过。三处走「有缓存就跳过 configure」快路径的调用点（GUI 的
+// compileAndRun()、无头的 runBuild()、无头 --package 的 cmdPackage()）都要用它，
+// 不能各自查一遍 CMakeCache.txt。
+bool buildConfigured(const std::string& build) {
+    if (!existsU8(joinPath(build, "CMakeCache.txt"))) return false;
+    return existsU8(joinPath(build, "Makefile")) || existsU8(joinPath(build, "build.ninja"));
+}
+
 std::string configPath() { return joinPath(exeDir(), "workbench.json"); }
 
 void loadConfig() {
@@ -306,6 +320,73 @@ void hintIfPrebuiltMismatch(const std::string& cmakeRaw) {
         sayTS("已改用源码编（约 3 分钟）。要恢复秒级编译，在目标平台重新生成预编译包", 2);
 }
 
+// 「这次到底走不走预编译」只有 configure 真正跑完、看过 cmake 的原样输出才知道——
+// new_project.cpp 生成的 CMakeLists（kCMake）里那两句 STATUS：「用预编译的 Easel」
+// 走预编译，几秒钟链上；「用本地的 Easel 源码」是第一次要把整个界面库编出来，
+// 几分钟起步。配置还没开始就说「几分钟」是对着开发机说话——学生用发布包，摆在
+// 那儿的预编译多数时候是能用的，正常应该几秒钟就编完，说「几分钟」白吓人。
+// FetchContent 联网拉那条没有这两句 STATUS 可认，认不出来就不瞎猜，什么都不说。
+void hintBuildSpeed(const std::string& cmakeRaw) {
+    if (cmakeRaw.find("用预编译的 Easel") != std::string::npos)
+        sayTS("用的是预编译库，这次编译只要几秒。");
+    else if (cmakeRaw.find("用本地的 Easel 源码") != std::string::npos)
+        sayTS("这次要把界面库从源码编出来，得几分钟；以后就只编你改的那几行，会快很多。");
+}
+
+// Linux 上最常见的 configure 失败根因：图形相关的 -dev 包没装。发布包只保证「解压
+// 就能跑」（运行时共享库够用），但「新建工程之后编译」哪怕链的是预编译库，链接期
+// 仍然要在本机核对 OpenGL / X11 / GTK 这些库存不存在（cmake/easelConfig.cmake.in 里
+// find_dependency(OpenGL) 那几行；从源码编还要多过 vendor/glfw 的 find_package(X11)
+// 和 vendor/nfd 的 pkg_check_modules(gtk+-3.0)）——精简安装 / 服务器版 / 容器大多只有
+// 运行时那一档，没有 -dev 那一档，一编就在这几处炸。
+// 三种关键字是在 ubuntu:22.04 容器里卸掉这些 -dev 包、真跑 cmake 抓出来的原样文字：
+//   OpenGL "Could NOT find OpenGL (missing: OPENGL_glx_LIBRARY OPENGL_INCLUDE_DIR)"
+//   X11    "Could NOT find X11 (missing: X11_X11_LIB)" / glfw 自己那句
+//          "XKB headers not found; install X11 development package"
+//   GTK    "Checking for module 'gtk+-3.0'" 后面跟 "No package 'gtk+-3.0' found"
+// 包名清单照抄 .github/workflows/ci.yml「装 Linux 上的图形依赖」那个 step，不自己编——
+// 那个 step 是 CI 每次真跑通的，保真。命中哪一类都给同一条命令：反正要装就一次装全，
+// 省得学生缺一个装一个、来回点好几轮「编译」。命令必须带 `apt-get update`——本地
+// 索引比已装的运行时库旧的机器上，跳过 update 直接 install 会撞一堆解不开的版本
+// 依赖（比如 libbz2-dev 要求精确版本号的 libbz2-1.0，而索引和已装的差一个 -updates
+// 补丁号），装的时候比原来那条 CMake 报错还难懂。
+// 这条命令本身也可能装不上：如果本机 apt 源缺 `<代号>-updates` 仓库（换过源、或者
+// 只同步了部分仓库的镜像——装机工具/国内镜像都可能踩到），装出来的运行时库版本会
+// 比仓库里能配到的 -dev 包新，一样解不开依赖，报的是「依赖: … 但是 … 正要被安装」
+// 这种版本对不上的错（实测 Ubuntu 24.04：机器上只配了 noble/noble-security，缺
+// noble-updates，libdbus-1-dev/libicu-dev/libzstd-dev 全那样炸；补上 noble-updates
+// 就一次装成功）。这条比原来的 CMake 报错更难懂，得单独提一句兜底，但只是兜底——
+// 别喧宾夺主，一句话，别写成教程。
+// GUI（sayTS 一行一行打）和无头命令（stamp 一行一行拼进 pretty）打印的方式不一样，
+// 检测本身只写一份：命中就把「解释」「照抄的命令」「装不上时的兜底」各填回一个
+// out 参数，没命中返回 false，调用方什么都不打。
+bool detectMissingLinuxDeps(const std::string& cmakeRaw, std::string* explain, std::string* command,
+                            std::string* fallback) {
+#if defined(__linux__)
+    bool missingOpenGL = cmakeRaw.find("Could NOT find OpenGL") != std::string::npos;
+    bool missingX11 = cmakeRaw.find("Could NOT find X11") != std::string::npos ||
+                      cmakeRaw.find("XKB headers not found") != std::string::npos;
+    bool missingGtk = cmakeRaw.find("gtk+-3.0") != std::string::npos;
+    if (!missingOpenGL && !missingX11 && !missingGtk) return false;
+    *explain = "这台机器像是缺图形相关的开发库（OpenGL/X11/GTK 的 -dev 包没装——发布包只带了"
+               "运行时共享库，链接期还要核对这些库的头文件和无版本号 .so 在不在）。装这一行，"
+               "再编一次：";
+    *command = "$ sudo apt-get update && sudo apt-get install -y libgl1-mesa-dev libx11-dev "
+               "libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxkbcommon-dev "
+               "libgtk-3-dev ninja-build";
+    *fallback = "这条要是装不上、报的是「依赖: … 但是 … 正要被安装」这种版本对不上的错，多半是软件源"
+                "缺 -updates 仓库——查一下 /etc/apt/sources.list.d/ubuntu.sources 里 Suites: 那一行有没有"
+                "「你的版本代号-updates」（比如 Ubuntu 24.04 是 noble-updates）。";
+    return true;
+#else
+    (void)cmakeRaw;
+    (void)explain;
+    (void)command;
+    (void)fallback;
+    return false;
+#endif
+}
+
 void feed(const std::string& chunk) {
     WB& w = wb();
     w.pending += chunk;
@@ -369,7 +450,8 @@ void startConfigure() {
     std::string              build = buildDir(w.projectDir);
     std::vector<std::string> argv = configureArgs(w.projectDir, build, "RelWithDebInfo");
     logConfigureStart(build, "RelWithDebInfo", argv);
-    sayTS("第一次要把界面库编出来，几分钟。以后就只编你改的那几行了。");
+    // 这次到底走预编译（几秒）还是从源码编（几分钟）要等 configure 跑完才知道——
+    // 见下面 hintBuildSpeed()，提示挪到配置完成之后打。
     w.stage = Configuring;
     if (!spawn(argv, w.projectDir)) return;
     w.status = "配置中…";
@@ -426,7 +508,7 @@ void compileAndRun() {
     sayTS("工程 " + w.projectDir);
     if (cmakeMissing()) { flushLog(); return; }
     std::string build = buildDir(w.projectDir);
-    if (existsU8(joinPath(build, "CMakeCache.txt"))) {
+    if (buildConfigured(build)) {
         if (easelDirStale(build, w.easelDir)) {
             sayTS("Easel 位置变了，重新配置构建目录");
             startConfigure();
@@ -555,6 +637,16 @@ void pump() {
             std::snprintf(buf, sizeof buf, "配置失败（退出码 %d）。上面几行是原因。", code);
             sayTS(buf, 1);
             cmakeMissing();
+            {
+                std::string cfgText;
+                for (const OutLine& o : w.out) cfgText += o.text + "\n";
+                std::string explain, command, fallback;
+                if (detectMissingLinuxDeps(cfgText, &explain, &command, &fallback)) {
+                    sayTS(explain, 1);
+                    sayTS(command);
+                    sayTS(fallback);
+                }
+            }
             w.status = "配置失败";
             w.stage = Idle;
             w.wantPackage = false;
@@ -566,6 +658,7 @@ void pump() {
             std::string cfgText;
             for (const OutLine& o : w.out) cfgText += o.text + "\n";
             hintIfPrebuiltMismatch(cfgText);
+            hintBuildSpeed(cfgText);
         }
         if (w.wantPackage) {
             const Toolchain&          tc = toolchain();
@@ -585,9 +678,22 @@ void pump() {
 
     if (w.stage == Building) {
         if (code != 0) {
-            std::snprintf(buf, sizeof buf, "编译失败：%d 个错误、%d 个警告。点红色那行跳到代码里。",
-                          w.errors, w.warnings);
-            sayTS(buf, 1);
+            if (w.errors == 0 && w.warnings == 0) {
+                // 一个错误/警告都没有：构建系统本身没起来（链接器报的东西没被
+                // parseDiagnostic 认出来、目标没找到之类），没有诊断可指，「点红色
+                // 那行」等于让人点空气。把原始输出（不算我们自己打的那些行）结尾
+                // 摆出来，好过什么都不给。
+                sayTS("编译失败，但没有具体的错误/警告可以点——这类失败通常不是代码本身的"
+                      "问题，是构建系统或者环境出了问题。原始输出最后几行：", 1);
+                std::string rawTail;
+                for (const OutLine& o : w.out)
+                    if (o.kind == 0) rawTail += o.text + "\n";
+                for (const std::string& l : tailNonEmptyLines(rawTail, 6)) addOut(l, 0);
+            } else {
+                std::snprintf(buf, sizeof buf, "编译失败：%d 个错误、%d 个警告。点红色那行跳到代码里。",
+                              w.errors, w.warnings);
+                sayTS(buf, 1);
+            }
             w.status = "编译失败";
             w.stage = Idle;
             w.wantPackage = false;
@@ -771,7 +877,7 @@ BuildOutcome runBuild(const std::string& dir) {
 
     stamp("工程 " + dir);
 
-    bool needConfigure = !existsU8(joinPath(build, "CMakeCache.txt"));
+    bool needConfigure = !buildConfigured(build);
     if (!needConfigure && easelDirStale(build, wb().easelDir)) {
         stamp("Easel 位置变了，重新配置构建目录");
         needConfigure = true;
@@ -791,6 +897,12 @@ BuildOutcome runBuild(const std::string& dir) {
             stamp("配置失败（退出码 " + std::to_string(cfgCode) + "）。上面几行是原因。");
             if (tc.cmake.empty())
                 stamp("cmake 没找到 —— 装 CMake（brew install cmake / 工具箱里已自带）或把它加进 PATH");
+            std::string explain, command, fallback;
+            if (detectMissingLinuxDeps(cfgRaw, &explain, &command, &fallback)) {
+                stamp(explain);
+                stamp(command);
+                stamp(fallback);
+            }
             out.raw = raw;
             out.pretty = pretty;
             out.seconds = sw.s();
@@ -822,6 +934,12 @@ BuildOutcome runBuild(const std::string& dir) {
         fileStamp(exe, nullptr, &sz);
         stamp("编译完成 → " + exe + "（" + formatBytes(sz) + "）" +
               (out.warnings ? "，" + std::to_string(out.warnings) + " 个警告" : std::string()));
+    } else if (out.errors == 0 && out.warnings == 0) {
+        // 一个错误/警告都没有：--json 也拿不出诊断（diagnostics 数组会是空的），
+        // 指望学生自己翻 --json 没意义。把构建这一步的原始输出结尾摆出来。
+        stamp("编译失败，但没有具体的错误/警告可以点——这类失败通常不是代码本身的问题，"
+              "是构建系统或者环境出了问题。原始输出最后几行：");
+        for (const std::string& l : tailNonEmptyLines(buildRaw, 6)) rawOut(l);
     } else {
         stamp("编译失败：" + std::to_string(out.errors) + " 个错误、" + std::to_string(out.warnings) +
               " 个警告。用 --json 拿结构化诊断。");
@@ -959,12 +1077,12 @@ int cmdPackage(const std::string& raw, bool jsonOut) {
     };
 
     stamp("工程 " + dir);
-    bool cacheExists = existsU8(joinPath(rel, "CMakeCache.txt"));
-    if (cacheExists && easelDirStale(rel, wb().easelDir)) {
+    bool alreadyConfigured = buildConfigured(rel);
+    if (alreadyConfigured && easelDirStale(rel, wb().easelDir)) {
         stamp("Easel 位置变了，重新配置构建目录");
-        cacheExists = false;
+        alreadyConfigured = false;
     }
-    int cfgCode = cacheExists ? 0 : -1;
+    int cfgCode = alreadyConfigured ? 0 : -1;
     if (cfgCode != 0) {
         std::vector<std::string> argv = configureArgs(dir, rel, "Release");
         stamp("构建目录 " + rel + "（" + (tc.ninja.empty() ? "Unix Makefiles" : "Ninja") + " · Release）");
@@ -981,6 +1099,12 @@ int cmdPackage(const std::string& raw, bool jsonOut) {
             stamp("配置失败（退出码 " + std::to_string(cfgCode) + "）。上面几行是原因。");
             if (tc.cmake.empty())
                 stamp("cmake 没找到 —— 装 CMake（brew install cmake / 工具箱里已自带）或把它加进 PATH");
+            std::string explain, command, fallback;
+            if (detectMissingLinuxDeps(cfgRaw, &explain, &command, &fallback)) {
+                stamp(explain);
+                stamp(command);
+                stamp(fallback);
+            }
         }
     }
 
@@ -1003,9 +1127,14 @@ int cmdPackage(const std::string& raw, bool jsonOut) {
     if (b.ok)
         stamp("编译完成" +
               (b.warnings ? "，" + std::to_string(b.warnings) + " 个警告" : std::string()));
-    else if (cfgCode == 0)
+    else if (cfgCode == 0 && b.errors == 0 && b.warnings == 0) {
+        stamp("编译失败，但没有具体的错误/警告可以点——这类失败通常不是代码本身的问题，"
+              "是构建系统或者环境出了问题。原始输出最后几行：");
+        for (const std::string& l : tailNonEmptyLines(buildRaw, 6)) rawOut(l);
+    } else if (cfgCode == 0) {
         stamp("编译失败：" + std::to_string(b.errors) + " 个错误、" + std::to_string(b.warnings) +
               " 个警告。用 --json 拿结构化诊断。");
+    }
 
     std::string output, packErr;
     long long   bytes = 0;

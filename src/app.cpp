@@ -531,7 +531,14 @@ std::string banner(const std::string& projectDir) {
         std::string v = quickVersion(tc.ninja);
         o += bannerLine("ninja", tc.ninja.empty() ? "没找到（配置时会退回 Makefiles）" : tc.ninja + (v.empty() ? "" : " " + v));
     }
+    // Linux 上少了图形开发包，配置时才会以一串 CMake 调用栈的形式爆出来（学生看不懂）。
+    // 在这里提前报一句，缺什么直接给能照抄的安装命令。其它平台返回空串，这行不出现。
+    {
+        std::string gfx = internal::linuxGraphicsDevStatus();
+        if (!gfx.empty()) o += bannerLine("图形开发包", gfx);
+    }
     o += bannerLine("工程目录", projectDir.empty() ? "（没打开工程）" : projectDir);
+
     return o;
 }
 
@@ -546,6 +553,10 @@ std::string App::doctor() const {
     o << "  显卡        : " << internal::backend::gpu() << "\n";
     o << "  DPI 缩放    : " << p_->dpi << "\n";
     o << "  窗口        : " << p_->w << " x " << p_->h << "\n";
+    {
+        std::string g = internal::linuxGraphicsDevStatus();
+        if (!g.empty()) o << "  图形开发库  : " << g << "\n";
+    }
     o << "  Dear ImGui  : " << IMGUI_VERSION << "   ImPlot: " << IMPLOT_VERSION << "\n";
     const internal::FontInfo& f = internal::fontInfo();
     o << "  ---- 字体 ----\n";
@@ -798,6 +809,10 @@ int App::run() {
             o << "  ---- 图形 ----\n";
             o << "  图形后端起不来：" << (reason.empty() ? "原因不明（backend::init 返回 false）" : reason)
               << "\n";
+            {
+                std::string g = internal::linuxGraphicsDevStatus();
+                if (!g.empty()) o << "  图形开发库  : " << g << "\n";
+            }
             std::printf("%s", o.str().c_str());
             std::fflush(stdout);
             return 0;
